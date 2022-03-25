@@ -50,7 +50,7 @@
     "read-pkg-up": "^7.0.1",
     "reflect-metadata": "^0.1.13",
     "shx": "^0.3.3",
-    "tstest": "^0.4.10"
+    "tstest": "^1.2.8"
   },
   "dependencies": {
     "jimp": "^0.16.1",
