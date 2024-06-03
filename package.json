@@ -1,6 +1,6 @@
 {
   "name": "@juzi/file-box",
-  "version": "1.7.7",
+  "version": "1.7.8",
   "description": "Pack a File into Box for easy move/transfer between servers no matter of where it is.(local path, remote url, or cloud storage)",
   "type": "module",
   "exports": {
@@ -59,6 +59,7 @@
     "gts": "^3.1.0",
     "pkg-jq": "^0.2.11",
     "read-pkg-up": "^8.0.0",
+    "https-proxy-agent": "^5.0.1",
     "reflect-metadata": "^0.1.13",
     "tap": "^16.3.9"
   },
