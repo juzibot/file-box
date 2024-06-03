@@ -5,6 +5,7 @@ import { createReadStream, createWriteStream } from 'fs'
 import { rm } from 'fs/promises'
 import http, { RequestOptions } from 'http'
 import https from 'https'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { Readable } from 'stream'
@@ -21,9 +22,6 @@ import {
   PROXY_TYPE,
   PROXY_USERNAME,
 } from './config.js'
-
-import pkg from 'https-proxy-agent'
-const { HttpsProxyAgent } = pkg
 
 const protocolMap: {
   [key: string]: { agent: http.Agent; request: typeof http.request }

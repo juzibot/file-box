@@ -58,7 +58,6 @@
     "@typescript-eslint/eslint-plugin": "^7.11.0",
     "eslint-plugin-n": "^16.2.0",
     "gts": "^3.1.0",
-    "https-proxy-agent": "^5.0.1",
     "pkg-jq": "^0.2.11",
     "read-pkg-up": "^8.0.0",
     "reflect-metadata": "^0.1.13",
@@ -67,6 +66,7 @@
   "dependencies": {
     "brolog": "^1.14.2",
     "clone-class": "^1.0.3",
+    "https-proxy-agent": "^7.0.4",
     "jimp": "^0.16.1",
     "jsqr": "^1.4.0",
     "mime": "^3.0.0",
