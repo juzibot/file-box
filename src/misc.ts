@@ -16,11 +16,6 @@ import {
   HTTP_REQUEST_TIMEOUT,
   HTTP_RESPONSE_TIMEOUT,
   NO_SLICE_DOWN,
-  PROXY_HOST,
-  PROXY_PASSWORD,
-  PROXY_PORT,
-  PROXY_TYPE,
-  PROXY_USERNAME,
 } from './config.js'
 
 const protocolMap: {
@@ -209,18 +204,6 @@ export async function streamToBuffer (stream: Readable): Promise<Buffer> {
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)
-}
-
-function getProxyUrl () {
-  const proxyType = PROXY_TYPE
-  const proxyHost = PROXY_HOST
-  const proxyPort = PROXY_PORT
-  const proxyUsername = PROXY_USERNAME
-  const proxyPassword = PROXY_PASSWORD
-  if (proxyType === 'http') {
-    return `http://${proxyUsername}:${proxyPassword}@${proxyHost}:${proxyPort}`
-  }
-  return ''
 }
 
 function setProxy (options: RequestOptions, proxyUrl?: string): void {
