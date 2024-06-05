@@ -503,9 +503,17 @@ class FileBox implements Pipeable, FileBoxInterface {
    */
   private readonly base64?    : string
   private readonly remoteUrl? : string
-  public url?                 : string
   private readonly qrCode?    : string
   private readonly uuid?      : string
+
+  get url() {
+    return this.remoteUrl
+  }
+
+  private proxyUrl?: string
+  useProxyUrl(url?: string) {
+    this.proxyUrl = url
+  }
 
   /**
    * Can not be serialized to JSON
@@ -637,7 +645,7 @@ class FileBox implements Pipeable, FileBoxInterface {
       throw new Error('no url')
     }
 
-    const headers = await httpHeadHeader(this.remoteUrl)
+    const headers = await httpHeadHeader(this.remoteUrl, this.proxyUrl)
 
     const httpFilename = httpHeaderToFileName(headers)
     if (httpFilename) {
@@ -867,7 +875,7 @@ class FileBox implements Pipeable, FileBoxInterface {
   private async _transformUrlToStream (): Promise<Readable> {
     return new Promise<Readable>((resolve, reject) => {
       if (this.remoteUrl) {
-        httpStream(this.remoteUrl, this.headers)
+        httpStream(this.remoteUrl, this.headers, this.proxyUrl)
           .then(resolve)
           .catch(reject)
       } else {

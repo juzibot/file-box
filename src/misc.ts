@@ -46,7 +46,7 @@ export function dataUrlToBase64 (dataUrl: string): string {
  *
  * @credit https://stackoverflow.com/a/43632171/1123955
  */
-export async function httpHeadHeader (url: string): Promise<http.IncomingHttpHeaders> {
+export async function httpHeadHeader (url: string, proxyUrl?: string): Promise<http.IncomingHttpHeaders> {
   const originUrl = url
   let REDIRECT_TTL = 7
 
@@ -57,7 +57,7 @@ export async function httpHeadHeader (url: string): Promise<http.IncomingHttpHea
 
     const res = await fetch(url, {
       method: 'HEAD',
-    })
+    }, proxyUrl)
     res.destroy()
 
     if (!/^3/.test(String(res.statusCode))) {
@@ -94,7 +94,7 @@ export function httpHeaderToFileName (headers: http.IncomingHttpHeaders): null |
   return null
 }
 
-export async function httpStream (url: string, headers: http.OutgoingHttpHeaders = {}): Promise<Readable> {
+export async function httpStream (url: string, headers: http.OutgoingHttpHeaders = {}, proxyUrl?: string): Promise<Readable> {
   const headHeaders = await httpHeadHeader(url)
   if (headHeaders.location) {
     url = headHeaders.location
@@ -110,20 +110,20 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   const fileSize = Number(headHeaders['content-length'])
 
   if (!NO_SLICE_DOWN && headHeaders['accept-ranges'] === 'bytes' && fileSize > HTTP_CHUNK_SIZE) {
-    return await downloadFileInChunks(url, options, fileSize, HTTP_CHUNK_SIZE)
+    return await downloadFileInChunks(url, options, fileSize, HTTP_CHUNK_SIZE, proxyUrl)
   } else {
-    return await fetch(url, options)
+    return await fetch(url, options, proxyUrl)
   }
 }
 
-async function fetch (url: string, options: http.RequestOptions): Promise<http.IncomingMessage> {
+async function fetch (url: string, options: http.RequestOptions, proxyUrl?: string): Promise<http.IncomingMessage> {
   const { protocol } = new URL(url)
   const { request, agent } = getProtocol(protocol)
   const opts: http.RequestOptions = {
     agent,
     ...options,
   }
-  setProxy(opts)
+  setProxy(opts, proxyUrl)
   const req = request(url, opts).end()
   req
     .on('error', () => {
@@ -149,6 +149,7 @@ async function downloadFileInChunks (
   options: http.RequestOptions,
   fileSize: number,
   chunkSize = HTTP_CHUNK_SIZE,
+  proxyUrl?: string,
 ): Promise<Readable> {
   const tmpFile = join(tmpdir(), `filebox-${randomUUID()}`)
   const writeStream = createWriteStream(tmpFile)
@@ -171,7 +172,7 @@ async function downloadFileInChunks (
     requestOptions.headers['Range'] = range
 
     try {
-      const res = await fetch(url, requestOptions)
+      const res = await fetch(url, requestOptions, proxyUrl)
       assert(allowStatusCode.includes(res.statusCode ?? 0), `Request failed with status code ${res.statusCode}`)
       assert(Number(res.headers['content-length']) > 0, 'Server returned 0 bytes of data')
       for await (const chunk of res) {
@@ -222,10 +223,9 @@ function getProxyUrl () {
   return ''
 }
 
-function setProxy (options: RequestOptions): void {
-  const url = getProxyUrl()
-  if (url) {
-    const agent = new HttpsProxyAgent(url)
+function setProxy (options: RequestOptions, proxyUrl?: string): void {
+  if (proxyUrl) {
+    const agent = new HttpsProxyAgent(proxyUrl)
     options.agent = agent
   }
 }
