@@ -11,3 +11,5 @@ export const NO_SLICE_DOWN = process.env['FILEBOX_NO_SLICE_DOWN'] === 'true'
 
 export const HTTP_CHUNK_SIZE = Number(process.env['FILEBOX_HTTP_CHUNK_SIZE'])
   || 1024 * 512
+
+export const READY_RETRY = Number(process.env['FILE_BOX_READY_RETRY']) || 3
