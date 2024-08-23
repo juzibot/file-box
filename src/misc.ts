@@ -119,7 +119,7 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
     ...options,
   }
   setProxy(opts, proxyUrl)
-  const req = request(url, opts).end()
+  const req = request(url, opts)
   req
     .on('error', () => {
       req.destroy()
@@ -127,6 +127,7 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
     .setTimeout(HTTP_REQUEST_TIMEOUT, () => {
       req.emit('error', new Error(`FileBox: Http request timeout (${HTTP_REQUEST_TIMEOUT})!`))
     })
+    .end()
   const responseEvents = await once(req, 'response')
   const res = responseEvents[0] as http.IncomingMessage
   res
