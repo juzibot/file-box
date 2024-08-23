@@ -25,6 +25,7 @@ import {
 }                         from 'clone-class'
 
 import {
+  READY_RETRY,
   VERSION,
 }                         from './config.js'
 import {
@@ -613,19 +614,30 @@ class FileBox implements Pipeable, FileBoxInterface {
   }
 
   async ready (): Promise<void> {
-    switch (this.type) {
-      case FileBoxType.Url:
-        await this._syncUrlMetadata()
-        break
+    let tryCount = 0
+    while (1) {
+      try {
+        switch (this.type) {
+          case FileBoxType.Url:
+            await this._syncUrlMetadata()
+            break
 
-      case FileBoxType.QRCode:
-        if (this.size === UNKNOWN_SIZE) {
-          this._size = (await this.toBuffer()).length
+          case FileBoxType.QRCode:
+            if (this.size === UNKNOWN_SIZE) {
+              this._size = (await this.toBuffer()).length
+            }
+            break
+
+          default:
+            break
         }
         break
-
-      default:
-        break
+      } catch (e) {
+        tryCount ++
+        if (tryCount >= READY_RETRY) {
+          throw e
+        }
+      }
     }
   }
 
