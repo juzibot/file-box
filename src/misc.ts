@@ -133,9 +133,11 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
     .on('error', () => {
       res.destroy()
     })
-    .setTimeout(HTTP_RESPONSE_TIMEOUT, () => {
+  if (res.socket) {
+    res.setTimeout(HTTP_RESPONSE_TIMEOUT, () => {
       res.emit('error', new Error(`FileBox: Http response timeout (${HTTP_RESPONSE_TIMEOUT})!`))
     })
+  }
   return res
 }
 
