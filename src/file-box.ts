@@ -657,7 +657,7 @@ class FileBox implements Pipeable, FileBoxInterface {
       throw new Error('no url')
     }
 
-    const headers = await httpHeadHeader(this.remoteUrl, this.proxyUrl)
+    const headers = await httpHeadHeader(this.remoteUrl, this.headers, this.proxyUrl)
 
     const httpFilename = httpHeaderToFileName(headers)
     if (httpFilename) {

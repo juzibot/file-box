@@ -41,7 +41,7 @@ export function dataUrlToBase64 (dataUrl: string): string {
  *
  * @credit https://stackoverflow.com/a/43632171/1123955
  */
-export async function httpHeadHeader (url: string, proxyUrl?: string): Promise<http.IncomingHttpHeaders> {
+export async function httpHeadHeader (url: string, headers: http.OutgoingHttpHeaders = {}, proxyUrl?: string): Promise<http.IncomingHttpHeaders> {
   const originUrl = url
   let REDIRECT_TTL = 7
 
@@ -52,6 +52,7 @@ export async function httpHeadHeader (url: string, proxyUrl?: string): Promise<h
 
     const res = await fetch(url, {
       method: 'HEAD',
+      headers,
     }, proxyUrl)
     res.destroy()
 
