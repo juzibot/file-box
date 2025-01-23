@@ -91,7 +91,7 @@ export function httpHeaderToFileName (headers: http.IncomingHttpHeaders): null |
 }
 
 export async function httpStream (url: string, headers: http.OutgoingHttpHeaders = {}, proxyUrl?: string): Promise<Readable> {
-  const headHeaders = await httpHeadHeader(url)
+  const headHeaders = await httpHeadHeader(url, headers, proxyUrl)
   if (headHeaders.location) {
     url = headHeaders.location
     const { protocol } = new URL(url)
