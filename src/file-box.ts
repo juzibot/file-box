@@ -387,6 +387,7 @@ class FileBox implements Pipeable, FileBoxInterface {
           md5: obj.md5,
           name: obj.name,
           size: obj.size,
+          headers: obj.headers,
         })
         break
 
