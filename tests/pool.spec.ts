@@ -33,7 +33,7 @@ test('filebox url pool', async (t) => {
     const filebox1_1 = fileboxes[1]
     const filebox100 = FileBox.fromUrl(`${url}?id=${100}`)
     void filebox100
-    const filebox1_2 = filebox.fromUrl(`${url}?id=${1}`)
+    const filebox1_2 = FileBox.fromUrl(`${url}?id=${1}`)
     t.ok(filebox1_1 !== filebox1_2, `filebox1_1 and filebox1_2 should be different instance since id1 should be removed from pool`)
     t.end()
   }).catch(t.threw)
