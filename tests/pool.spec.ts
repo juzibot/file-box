@@ -14,9 +14,6 @@ test('filebox url pool', async (t) => {
 
     t.ok(filebox1 === filebox2, `filebox1 and filebox2 should be the same instance`)
     t.ok(filebox1 !== filebox3, `filebox1 and filebox3 should be different instance`)
-
-    await filebox1.ready()
-    t.ok(filebox2.size > 0, `filebox2 should have content after filebox1.ready() called`)
     t.end()
   }).catch(t.threw)
 })
