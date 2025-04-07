@@ -24,6 +24,7 @@ test('filebox url pool', async (t) => {
     let fileboxes: FileBox[] = []
     for (let i = 0; i < MAX_URL_FILEBOX_POOL_SIZE; i++) {
       const filebox = FileBox.fromUrl(`${url}?id=${i}`)
+      await new Promise(resolve => setTimeout(resolve, 100))
       fileboxes.push(filebox)
     }
 
