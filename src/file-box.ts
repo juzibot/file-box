@@ -154,6 +154,7 @@ class FileBox implements Pipeable, FileBoxInterface {
     if (!unique) {
       const obj = this.urlFileboxPool.get(url)
       if (obj) {
+        obj.lastReadTimestamp = Date.now()
         return obj.filebox
       }
     }
