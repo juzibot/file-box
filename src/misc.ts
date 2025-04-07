@@ -1,5 +1,5 @@
 import assert from 'assert'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { once } from 'events'
 import { createReadStream, createWriteStream } from 'fs'
 import { rm } from 'fs/promises'
@@ -215,4 +215,8 @@ function setProxy (options: RequestOptions, proxyUrl?: string): void {
     const agent = new HttpsProxyAgent(proxyUrl)
     options.agent = agent
   }
+}
+
+export function getUrlDigest(url: string): string {
+  return createHash('sha256').update(url).digest('hex')
 }

@@ -25,6 +25,7 @@ import {
 }                         from 'clone-class'
 
 import {
+  MAX_URL_FILEBOX_POOL_SIZE,
   READY_RETRY,
   VERSION,
 }                         from './config.js'
@@ -44,6 +45,7 @@ import {
 }                         from './file-box.type.js'
 import {
   dataUrlToBase64,
+  getUrlDigest,
   httpHeaderToFileName,
   httpHeadHeader,
   httpStream,
@@ -74,6 +76,16 @@ class FileBox implements Pipeable, FileBoxInterface {
    *
    */
   static readonly version = VERSION
+
+  /**
+   * pool for url filebox
+   * cannot use weakmap because we need to keep the filebox instance for a while
+   */
+
+  private static readonly urlFileboxPool: Map<string, {
+    filebox: FileBox,
+    lastReadTimestamp: number,
+  }> = new Map()
 
   /**
    * Symbol.hasInstance: instanceof
@@ -112,6 +124,7 @@ class FileBox implements Pipeable, FileBoxInterface {
       name?    : string,
       size?    : number,
       md5?     : string,
+      unique?  : boolean,
     },
   ): FileBox
 
@@ -134,9 +147,19 @@ class FileBox implements Pipeable, FileBoxInterface {
       name?    : string,
       size?    : number,
       md5?     : string,
+      unique?  : boolean,
     },
     headers? : HTTP.OutgoingHttpHeaders,
   ): FileBox {
+    const unique = typeof nameOrOptions === 'object' && nameOrOptions.unique
+    if (!unique) {
+      const key = getUrlDigest(url)
+      const obj = this.urlFileboxPool.get(key)
+      if (obj) {
+        obj.lastReadTimestamp = Date.now()
+        return obj.filebox
+      }
+    }
     let name: undefined | string
     let size: undefined | number
     let md5: undefined | string
@@ -162,7 +185,21 @@ class FileBox implements Pipeable, FileBoxInterface {
       type : FileBoxType.Url,
       url,
     }
-    return new this(options)
+    const newFilebox = new this(options)
+    if (!unique) {
+      const key = getUrlDigest(url)
+      this.urlFileboxPool.set(key, {
+        filebox: newFilebox,
+        lastReadTimestamp: Date.now(),
+      })
+      if (this.urlFileboxPool.size > MAX_URL_FILEBOX_POOL_SIZE) {
+        const coolestFilebox = Array.from(this.urlFileboxPool.values()).sort((a, b) => a.lastReadTimestamp - b.lastReadTimestamp)[0]
+        if (coolestFilebox) {
+          this.urlFileboxPool.delete(getUrlDigest(coolestFilebox.filebox.url!))
+        }
+      }
+    }
+    return newFilebox
   }
 
   /**
