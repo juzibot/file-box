@@ -45,6 +45,7 @@ import {
 }                         from './file-box.type.js'
 import {
   dataUrlToBase64,
+  getUrlDigest,
   httpHeaderToFileName,
   httpHeadHeader,
   httpStream,
@@ -152,7 +153,8 @@ class FileBox implements Pipeable, FileBoxInterface {
   ): FileBox {
     const unique = typeof nameOrOptions === 'object' && nameOrOptions.unique
     if (!unique) {
-      const obj = this.urlFileboxPool.get(url)
+      const key = getUrlDigest(url)
+      const obj = this.urlFileboxPool.get(key)
       if (obj) {
         obj.lastReadTimestamp = Date.now()
         return obj.filebox
@@ -185,14 +187,15 @@ class FileBox implements Pipeable, FileBoxInterface {
     }
     const newFilebox = new this(options)
     if (!unique) {
-      this.urlFileboxPool.set(url, {
+      const key = getUrlDigest(url)
+      this.urlFileboxPool.set(key, {
         filebox: newFilebox,
         lastReadTimestamp: Date.now(),
       })
       if (this.urlFileboxPool.size > MAX_URL_FILEBOX_POOL_SIZE) {
         const coolestFilebox = Array.from(this.urlFileboxPool.values()).sort((a, b) => a.lastReadTimestamp - b.lastReadTimestamp)[0]
         if (coolestFilebox) {
-          this.urlFileboxPool.delete(coolestFilebox.filebox.url!)
+          this.urlFileboxPool.delete(getUrlDigest(coolestFilebox.filebox.url!))
         }
       }
     }
