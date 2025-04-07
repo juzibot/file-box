@@ -25,6 +25,7 @@ import {
 }                         from 'clone-class'
 
 import {
+  MAX_URL_FILEBOX_POOL_SIZE,
   READY_RETRY,
   VERSION,
 }                         from './config.js'
@@ -76,6 +77,16 @@ class FileBox implements Pipeable, FileBoxInterface {
   static readonly version = VERSION
 
   /**
+   * pool for url filebox
+   * cannot use weakmap because we need to keep the filebox instance for a while
+   */
+
+  private static readonly urlFileboxPool: Map<string, {
+    filebox: FileBox,
+    lastReadTimestamp: number,
+  }> = new Map()
+
+  /**
    * Symbol.hasInstance: instanceof
    *
    * @link https://www.keithcirkel.co.uk/metaprogramming-in-es6-symbols/
@@ -112,6 +123,7 @@ class FileBox implements Pipeable, FileBoxInterface {
       name?    : string,
       size?    : number,
       md5?     : string,
+      unique?  : boolean,
     },
   ): FileBox
 
@@ -134,9 +146,17 @@ class FileBox implements Pipeable, FileBoxInterface {
       name?    : string,
       size?    : number,
       md5?     : string,
+      unique?  : boolean,
     },
     headers? : HTTP.OutgoingHttpHeaders,
   ): FileBox {
+    const unique = typeof nameOrOptions === 'object' && nameOrOptions.unique
+    if (!unique) {
+      const obj = this.urlFileboxPool.get(url)
+      if (obj) {
+        return obj.filebox
+      }
+    }
     let name: undefined | string
     let size: undefined | number
     let md5: undefined | string
@@ -162,7 +182,20 @@ class FileBox implements Pipeable, FileBoxInterface {
       type : FileBoxType.Url,
       url,
     }
-    return new this(options)
+    const newFilebox = new this(options)
+    if (!unique) {
+      this.urlFileboxPool.set(url, {
+        filebox: newFilebox,
+        lastReadTimestamp: Date.now(),
+      })
+      if (this.urlFileboxPool.size > MAX_URL_FILEBOX_POOL_SIZE) {
+        const coolestFilebox = Array.from(this.urlFileboxPool.values()).sort((a, b) => a.lastReadTimestamp - b.lastReadTimestamp)[0]
+        if (coolestFilebox) {
+          this.urlFileboxPool.delete(coolestFilebox.filebox.url!)
+        }
+      }
+    }
+    return newFilebox
   }
 
   /**
