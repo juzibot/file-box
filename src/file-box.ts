@@ -658,8 +658,8 @@ class FileBox implements Pipeable, FileBoxInterface {
       throw new Error('no url')
     }
 
-    if (this._mediaType) {
-      // allow duplicate call, other wise error will be thrown
+    if (this._metadata) {
+      // allow duplicate ready call, otherwise error will be thrown
       return
     }
 
