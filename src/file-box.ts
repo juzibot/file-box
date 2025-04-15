@@ -658,6 +658,11 @@ class FileBox implements Pipeable, FileBoxInterface {
       throw new Error('no url')
     }
 
+    if (this._metadata) {
+      // allow duplicate ready call, otherwise error will be thrown
+      return
+    }
+
     const headers = await httpHeadHeader(this.remoteUrl, this.headers, this.proxyUrl)
 
     const httpFilename = httpHeaderToFileName(headers)
