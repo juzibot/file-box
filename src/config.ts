@@ -13,5 +13,3 @@ export const HTTP_CHUNK_SIZE = Number(process.env['FILEBOX_HTTP_CHUNK_SIZE'])
   || 1024 * 512
 
 export const READY_RETRY = Number(process.env['FILE_BOX_READY_RETRY']) || 3
-
-export const MAX_URL_FILEBOX_POOL_SIZE = Number(process.env['FILE_BOX_MAX_URL_FILEBOX_POOL_SIZE']) || 100
