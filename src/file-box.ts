@@ -59,6 +59,7 @@ import {
 import type {
   FileBoxInterface,
 }                         from './interface.js'
+import { log } from 'brolog'
 
 const EMPTY_META_DATA = Object.freeze({})
 const UNKNOWN_SIZE    = -1
@@ -493,7 +494,8 @@ class FileBox implements Pipeable, FileBoxInterface {
 
   set metadata (data: Metadata) {
     if (this._metadata) {
-      throw new Error('metadata can not be modified after set')
+      log.warn('metadata can not be modified after set')
+      return
     }
     this._metadata = { ...data }
     Object.freeze(this._metadata)
@@ -656,11 +658,6 @@ class FileBox implements Pipeable, FileBoxInterface {
     }
     if (!this.remoteUrl) {
       throw new Error('no url')
-    }
-
-    if (this._metadata) {
-      // allow duplicate ready call, otherwise error will be thrown
-      return
     }
 
     const headers = await httpHeadHeader(this.remoteUrl, this.headers, this.proxyUrl)
