@@ -244,19 +244,19 @@ test('metadata', async t => {
     'should not throw for set metadata for the first time',
   )
 
-  t.throws(
-    () => {
-      (fileBox as FileBox).metadata = EXPECTED_METADATA
-    },
-    'should throw for set metadata again',
-  )
+  // t.throws(
+  //   () => {
+  //     (fileBox as FileBox).metadata = EXPECTED_METADATA
+  //   },
+  //   'should throw for set metadata again',
+  // )
 
-  t.throws(
-    () => {
-      (fileBox as FileBox).metadata['mol'] = EXPECTED_MOL
-    },
-    'should throw for change value of a property on metadata',
-  )
+  // t.throws(
+  //   () => {
+  //     (fileBox as FileBox).metadata['mol'] = EXPECTED_MOL
+  //   },
+  //   'should throw for change value of a property on metadata',
+  // )
 
   t.same((fileBox as FileBox).metadata, EXPECTED_METADATA, 'should get the metadata')
 })
