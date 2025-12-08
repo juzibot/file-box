@@ -170,7 +170,7 @@ async function downloadFileInChunks (
     const range = `bytes=${start}-${end}`
     const requestOptions = Object.assign({}, requestBaseOptions)
     assert(requestOptions.headers, 'Errors that should not happen: Invalid headers')
-    requestOptions.headers['Range'] = range
+    ;(requestOptions.headers as http.OutgoingHttpHeaders)['Range'] = range
 
     try {
       const res = await fetch(url, requestOptions, proxyUrl)
