@@ -174,6 +174,14 @@ async function downloadFileInChunks (
       const res = await fetch(url, requestOptions, proxyUrl)
       assert(allowStatusCode.includes(res.statusCode ?? 0), `Request failed with status code ${res.statusCode}`)
       assert(Number(res.headers['content-length']) > 0, 'Server returned 0 bytes of data')
+      try {
+        const { total } = parseContentRange(res.headers['content-range'] ?? '')
+        if (total > 0 && total < fileSize) {
+          // 某些云服务商（如腾讯云）在 head 方法中返回的 size 是原图大小，但下载时返回的是压缩后的图片，会比原图小。
+          // 这种在首次下载时虽然请求了原图大小的范围，可能比缩略图大，但会一次性返回完整的原图，而不是报错 416，通过修正 fileSize 跳出循环即可。
+          fileSize = total
+        }
+      } catch (error) {}
       for await (const chunk of res) {
         assert(Buffer.isBuffer(chunk))
         downSize += chunk.length
@@ -214,5 +222,18 @@ function setProxy (options: RequestOptions, proxyUrl?: string): void {
   if (proxyUrl) {
     const agent = new HttpsProxyAgent(proxyUrl)
     options.agent = agent
+  }
+}
+
+
+function parseContentRange (contentRange: string): { start: number, end: number, total: number } {
+  const matches = contentRange.match(/bytes (\d+)-(\d+)\/(\d+)/)
+  if (!matches) {
+    throw new Error('Invalid content range')
+  }
+  return {
+    start: Number(matches[1]),
+    end: Number(matches[2]),
+    total: Number(matches[3]),
   }
 }
