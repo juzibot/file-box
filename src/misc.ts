@@ -25,6 +25,8 @@ const protocolMap: {
   'https:': { agent: https.globalAgent, request: https.request },
 }
 
+const unsupportedRangeDomains = new Set<string>()
+
 function getProtocol (protocol: string) {
   assert(protocolMap[protocol], new Error('unknown protocol: ' + protocol))
   return protocolMap[protocol]!
@@ -94,9 +96,9 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   const headHeaders = await httpHeadHeader(url, headers, proxyUrl)
   if (headHeaders.location) {
     url = headHeaders.location
-    const { protocol } = new URL(url)
-    getProtocol(protocol)
   }
+  const { protocol, hostname } = new URL(url)
+  getProtocol(protocol)
 
   const options: http.RequestOptions = {
     headers: { ...headers },
@@ -105,7 +107,7 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
 
   const fileSize = Number(headHeaders['content-length'])
 
-  if (!NO_SLICE_DOWN && headHeaders['accept-ranges'] === 'bytes' && fileSize > HTTP_CHUNK_SIZE) {
+  if (!unsupportedRangeDomains.has(hostname)! && !NO_SLICE_DOWN && headHeaders['accept-ranges'] === 'bytes' && fileSize > HTTP_CHUNK_SIZE) {
     return await downloadFileInChunks(url, options, fileSize, HTTP_CHUNK_SIZE, proxyUrl)
   } else {
     return await fetch(url, options, proxyUrl)
@@ -172,8 +174,23 @@ async function downloadFileInChunks (
 
     try {
       const res = await fetch(url, requestOptions, proxyUrl)
+      if (res.statusCode === 416) {
+        unsupportedRangeDomains.add(new URL(url).hostname)
+        // 某些云服务商对分片下载的支持可能不规范，需要保留一个回退的方式
+        writeStream.close()
+        await rm(tmpFile, { force: true })
+        return await fetch(url, requestBaseOptions, proxyUrl)
+      }
       assert(allowStatusCode.includes(res.statusCode ?? 0), `Request failed with status code ${res.statusCode}`)
       assert(Number(res.headers['content-length']) > 0, 'Server returned 0 bytes of data')
+      try {
+        const { total } = parseContentRange(res.headers['content-range'] ?? '')
+        if (total > 0 && total < fileSize) {
+          // 某些云服务商（如腾讯云）在 head 方法中返回的 size 是原图大小，但下载时返回的是压缩后的图片，会比原图小。
+          // 这种在首次下载时虽然请求了原图大小的范围，可能比缩略图大，但会一次性返回完整的原图，而不是报错 416，通过修正 fileSize 跳出循环即可。
+          fileSize = total
+        }
+      } catch (error) {}
       for await (const chunk of res) {
         assert(Buffer.isBuffer(chunk))
         downSize += chunk.length
@@ -183,8 +200,8 @@ async function downloadFileInChunks (
     } catch (error) {
       const err = error as Error
       if (--retries <= 0) {
-        void rm(tmpFile, { force: true })
         writeStream.close()
+        void rm(tmpFile, { force: true })
         throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
       }
     }
@@ -214,5 +231,18 @@ function setProxy (options: RequestOptions, proxyUrl?: string): void {
   if (proxyUrl) {
     const agent = new HttpsProxyAgent(proxyUrl)
     options.agent = agent
+  }
+}
+
+
+function parseContentRange (contentRange: string): { start: number, end: number, total: number } {
+  const matches = contentRange.match(/bytes (\d+)-(\d+)\/(\d+)/)
+  if (!matches) {
+    throw new Error('Invalid content range')
+  }
+  return {
+    start: Number(matches[1]),
+    end: Number(matches[2]),
+    total: Number(matches[3]),
   }
 }
