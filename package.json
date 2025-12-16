@@ -55,7 +55,8 @@
     "@types/node": "^18.18.7",
     "@types/qrcode": "^1.4.1",
     "@types/uuid": "^8.3.3",
-    "@typescript-eslint/eslint-plugin": "^7.11.0",
+    "@typescript-eslint/eslint-plugin": "5.62.0",
+    "@typescript-eslint/parser": "5.62.0",
     "eslint-plugin-n": "^16.2.0",
     "gts": "^3.1.0",
     "pkg-jq": "^0.2.11",
@@ -73,6 +74,12 @@
     "mime": "^3.0.0",
     "qrcode": "^1.5.0",
     "uuid": "^8.3.2"
+  },
+  "overrides": {
+    "@typescript-eslint/eslint-plugin": "5.62.0",
+    "@typescript-eslint/parser": "5.62.0",
+    "@typescript-eslint/utils": "5.62.0",
+    "@typescript-eslint/type-utils": "5.62.0"
   },
   "files": [
     "dist",

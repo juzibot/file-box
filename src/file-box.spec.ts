@@ -2,13 +2,15 @@
 
 import 'reflect-metadata'
 
-import assert                       from 'assert'
-import { PassThrough, Readable }    from 'stream'
-import { test, sinon }              from 'tstest'
-import { instanceToClass }          from 'clone-class'
+import assert from 'assert'
+import { instanceToClass } from 'clone-class'
+import { createServer } from 'http'
+import type { AddressInfo } from 'net'
+import { PassThrough, Readable } from 'stream'
+import { sinon, test } from 'tstest'
 
-import { FileBox }      from './file-box.js'
-import { FileBoxType }  from './file-box.type.js'
+import { FileBox } from './file-box.js'
+import { FileBoxType } from './file-box.type.js'
 
 const requiredMetadataKey = Symbol('required')
 
@@ -113,7 +115,32 @@ test('syncRemote()', async t => {
 
   }
 
-  const URL = 'http://httpbin.org/response-headers?Content-Disposition=attachment;%20filename%3d%22test.txt%22&filename=test.txt'
+  /**
+   * 使用本地 server，避免依赖外网（httpbin 不稳定/可能被墙/会返回 html）
+   */
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD' && req.url?.startsWith('/response-headers')) {
+      res.writeHead(200, {
+        'Content-Disposition': 'attachment; filename="test.txt"',
+        'Content-Length': '159',
+        'Content-Type': 'application/json',
+      })
+      res.end()
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
+
+  const URL = `${host}/response-headers?Content-Disposition=attachment;%20filename%3d%22test.txt%22&filename=test.txt`
 
   const EXPECTED_NAME_FROM_URL    = 'response-headers'
   const EXPECTED_TYPE_FROM_URL    = 'application/unknown'

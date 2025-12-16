@@ -1,6 +1,8 @@
 #!/usr/bin/env -S node --no-warnings --loader ts-node/esm
 
 // tslint:disable:no-shadowed-variable
+import { createServer } from 'http'
+import type { AddressInfo } from 'net'
 import { test } from 'tstest'
 
 import {
@@ -27,14 +29,42 @@ test('dataUrl to base64', async t => {
 })
 
 test('httpHeadHeader', async t => {
-  const URL = 'https://github.com/huan/file-box/archive/v0.6.tar.gz'
+  /**
+   * 使用本地 server，避免依赖外网（CI/本地网络不稳定会导致 flaky）
+   * 同时覆盖：302 Location 为相对路径的跳转逻辑
+   */
+  const server = createServer((req, res) => {
+    if (req.url === '/redirect') {
+      res.writeHead(302, { Location: '/final' })
+      res.end()
+      return
+    }
+    if (req.url === '/final') {
+      res.writeHead(200, {
+        'Content-Disposition': 'attachment; filename=file-box-0.6.tar.gz',
+        'Content-Length': '0',
+      })
+      res.end()
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
 
-  const EXPECTED_HEADERS_KEY   = 'content-disposition'
-  const EXPECTED_HEADERS_VALUE = 'attachment; filename=file-box-0.6.tar.gz'
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
 
-  const headers = await httpHeadHeader(URL)
-
-  t.equal(headers[EXPECTED_HEADERS_KEY], EXPECTED_HEADERS_VALUE, 'should get the headers right')
+  const headers = await httpHeadHeader(`${host}/redirect`)
+  t.equal(
+    headers['content-disposition'],
+    'attachment; filename=file-box-0.6.tar.gz',
+    'should get the headers right',
+  )
 })
 
 test('httpHeaderToFileName', async t => {
@@ -54,7 +84,18 @@ test('httpHeaderToFileName', async t => {
 })
 
 test('httpStream', async t => {
-  const URL = 'https://httpbin.org/headers'
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ headers: req.headers }))
+  })
+
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
 
   const MOL_KEY = 'Mol'
   const MOL_VAL = '42'
@@ -62,19 +103,72 @@ test('httpStream', async t => {
   const headers = {} as { [idx: string]: string }
   headers[MOL_KEY] = MOL_VAL
 
-  const res = await httpStream(URL, headers)
+  const res = await httpStream(`${host}/headers`, headers)
 
   const buffer = await streamToBuffer(res)
   const obj = JSON.parse(buffer.toString())
-  t.equal(obj.headers[MOL_KEY], MOL_VAL, 'should send the header right')
+  // Node 会把 header name 规范成小写
+  t.equal(obj.headers[MOL_KEY.toLowerCase()], MOL_VAL, 'should send the header right')
 })
 
 test('httpStream in chunks', async (t) => {
-  const URL = 'https://media.w3.org/2010/05/sintel/trailer.mp4'
-  const res = await httpStream(URL)
-  let length = 0
-  for await (const chunk of res) {
-    length += chunk.length
+  const FILE_SIZE = 1024 * 1024 + 123 // > 默认 chunk size 触发分片逻辑
+  const content = Buffer.alloc(FILE_SIZE, 'A')
+
+  const server = createServer((req, res) => {
+    // HEAD：让 httpStream 判断是否支持 range + content-length
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(FILE_SIZE),
+      })
+      res.end()
+      return
+    }
+
+    const range = req.headers.range
+    if (range) {
+      const m = String(range).match(/bytes=(\d+)-(\d+)/)
+      if (!m) {
+        res.writeHead(416)
+        res.end()
+        return
+      }
+      const start = Number(m[1])
+      const end = Number(m[2])
+      const chunk = content.subarray(start, end + 1)
+      res.writeHead(206, {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(chunk.length),
+        'Content-Range': `bytes ${start}-${end}/${FILE_SIZE}`,
+      })
+      res.end(chunk)
+      return
+    }
+
+    res.writeHead(200, {
+      'Accept-Ranges': 'bytes',
+      'Content-Length': String(FILE_SIZE),
+    })
+    res.end(content)
+  })
+
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
+
+  const originalChunkSize = process.env['FILEBOX_HTTP_CHUNK_SIZE']
+  process.env['FILEBOX_HTTP_CHUNK_SIZE'] = String(256 * 1024)
+  try {
+    const res = await httpStream(`${host}/file`)
+    const buffer = await streamToBuffer(res)
+    t.equal(buffer.length, FILE_SIZE, 'should get data in chunks right')
+  } finally {
+    if (originalChunkSize) process.env['FILEBOX_HTTP_CHUNK_SIZE'] = originalChunkSize
+    else delete process.env['FILEBOX_HTTP_CHUNK_SIZE']
   }
-  t.equal(length, 4372373, 'should get data in chunks right')
 })
