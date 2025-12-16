@@ -15,7 +15,6 @@ import {
   HTTP_CHUNK_SIZE,
   HTTP_REQUEST_TIMEOUT,
   HTTP_RESPONSE_TIMEOUT,
-  NO_SLICE_DOWN,
 } from './config.js'
 
 const protocolMap: {
@@ -25,6 +24,7 @@ const protocolMap: {
   'https:': { agent: https.globalAgent, request: https.request },
 }
 
+const noop = () => { }
 const unsupportedRangeDomains = new Set<string>()
 
 function getProtocol (protocol: string) {
@@ -53,8 +53,8 @@ export async function httpHeadHeader (url: string, headers: http.OutgoingHttpHea
     }
 
     const res = await fetch(url, {
-      method: 'HEAD',
       headers,
+      method: 'HEAD',
     }, proxyUrl)
     res.destroy()
 
@@ -71,7 +71,8 @@ export async function httpHeadHeader (url: string, headers: http.OutgoingHttpHea
       throw new Error('302 found but no location!')
     }
 
-    url = res.headers.location
+    // Location 可能是相对路径，需要以当前 url 作为 base 解析
+    url = new URL(res.headers.location, url).toString()
   }
 }
 
@@ -107,8 +108,12 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
 
   const fileSize = Number(headHeaders['content-length'])
 
-  if (!unsupportedRangeDomains.has(hostname)! && !NO_SLICE_DOWN && headHeaders['accept-ranges'] === 'bytes' && fileSize > HTTP_CHUNK_SIZE) {
-    return await downloadFileInChunks(url, options, fileSize, HTTP_CHUNK_SIZE, proxyUrl)
+  // 运行时读取 env：方便测试/调用方动态调整
+  const noSliceDown = process.env['FILEBOX_NO_SLICE_DOWN'] === 'true'
+  const chunkSize = Number(process.env['FILEBOX_HTTP_CHUNK_SIZE']) || HTTP_CHUNK_SIZE
+
+  if (!unsupportedRangeDomains.has(hostname) && !noSliceDown && headHeaders['accept-ranges'] === 'bytes' && fileSize > chunkSize) {
+    return await downloadFileInChunks(url, options, fileSize, chunkSize, proxyUrl)
   } else {
     return await fetch(url, options, proxyUrl)
   }
@@ -117,32 +122,81 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
 async function fetch (url: string, options: http.RequestOptions, proxyUrl?: string): Promise<http.IncomingMessage> {
   const { protocol } = new URL(url)
   const { request, agent } = getProtocol(protocol)
+  const abortController = new AbortController()
+  const signal = abortController.signal
   const opts: http.RequestOptions = {
     agent,
     ...options,
+    signal,
   }
   setProxy(opts, proxyUrl)
+
   const req = request(url, opts)
-  req
-    .on('error', () => {
-      req.destroy()
+  let res: http.IncomingMessage | undefined
+
+  // 兜底：任何时候 req.error 都不会变成 uncaughtException
+  const onReqError = (err: unknown) => {
+    const error = err instanceof Error ? err : new Error(String(err))
+    // 统一用 abort 中止请求：signal 已挂在 req 上，并且我们会把 abort(reason) 桥接到 res.destroy(...)
+    abortController.abort(error)
+  }
+  req.on('error', noop)
+    .on('error', onReqError)
+    .once('close', () => {
+      // close 后禁用 request timeout，避免定时器晚到触发 destroy -> error 无人监听
+      try { req.setTimeout(0) } catch { }
+      req.off('error', onReqError)
+      req.off('error', noop)
     })
+    // request timeout：只用于“拿到 response 之前”（连接/握手/首包）
     .setTimeout(HTTP_REQUEST_TIMEOUT, () => {
-      req.emit('error', new Error(`FileBox: Http request timeout (${HTTP_REQUEST_TIMEOUT})!`))
+      // 已经拿到 response 时，不要再用 request timeout 误伤（会导致 aborted/ECONNRESET）
+      if (res) return
+      abortController.abort(new Error(`FileBox: Http request timeout (${HTTP_REQUEST_TIMEOUT})!`))
     })
     .end()
-  const responseEvents = await once(req, 'response')
-  const res = responseEvents[0] as http.IncomingMessage
-  res
-    .on('error', () => {
-      res.destroy()
-    })
-  if (res.socket) {
-    res.setTimeout(HTTP_RESPONSE_TIMEOUT, () => {
-      res.emit('error', new Error(`FileBox: Http response timeout (${HTTP_RESPONSE_TIMEOUT})!`))
-    })
+
+  try {
+    const responseEvent = await once(req, 'response', { signal })
+    res = responseEvent[0] as http.IncomingMessage
+    // response 到来后清掉 request timeout，避免误伤长下载导致 aborted/ECONNRESET
+    try { req.setTimeout(0) } catch {}
+    // 必须尽早挂，避免 “response 刚到就 error/abort” 的竞态导致 uncaughtException
+    res.on('error', noop)
+    signal.throwIfAborted()
+  } catch (e) {
+    // once(...) 被 signal abort 时通常会抛 AbortError；优先抛出 abort(reason) 的真实原因
+    const reason = signal.reason as unknown
+    const err = reason instanceof Error
+      ? reason
+      : (e instanceof Error ? e : new Error(String(e)))
+    // 失败时尽量主动清理，避免 socket 悬挂（destroy 重复调用是安全的）
+    try { res?.destroy(err) } catch {}
+    try { req.destroy(err) } catch {}
+    throw err
   }
-  return res
+
+  const onAbort = () => {
+    const reason = signal.reason as unknown
+    res?.destroy(reason instanceof Error ? reason : new Error(String(reason)))
+  }
+  signal.addEventListener('abort', onAbort, { once: true })
+  res!
+    .once('end', () => { try { res!.setTimeout(0) } catch { } })
+    .once('close', () => {
+      // close 时做清理/兜底判断（尽力而为）
+      try { res!.setTimeout(0) } catch { }
+      if (!res!.complete && !res!.destroyed) {
+        // 有些场景不会 emit 'aborted'，用 close + complete 兜底一次
+        res!.destroy(new Error('FileBox: Http response aborted!'))
+      }
+      signal.removeEventListener('abort', onAbort)
+      res!.off('error', noop)
+    })
+    .setTimeout(HTTP_RESPONSE_TIMEOUT, () => {
+      abortController.abort(new Error(`FileBox: Http response timeout (${HTTP_RESPONSE_TIMEOUT})!`))
+    })
+  return res!
 }
 
 async function downloadFileInChunks (
@@ -154,6 +208,12 @@ async function downloadFileInChunks (
 ): Promise<Readable> {
   const tmpFile = join(tmpdir(), `filebox-${randomUUID()}`)
   const writeStream = createWriteStream(tmpFile)
+  const writeAbortController = new AbortController()
+  const signal = writeAbortController.signal
+  const onWriteError = (err: unknown) => {
+    writeAbortController.abort(err instanceof Error ? err : new Error(String(err)))
+  }
+  writeStream.once('error', onWriteError)
   const allowStatusCode = [ 200, 206 ]
   const requestBaseOptions: http.RequestOptions = {
     headers: {},
@@ -177,7 +237,10 @@ async function downloadFileInChunks (
       if (res.statusCode === 416) {
         unsupportedRangeDomains.add(new URL(url).hostname)
         // 某些云服务商对分片下载的支持可能不规范，需要保留一个回退的方式
-        writeStream.close()
+        writeStream.destroy()
+        try {
+          await once(writeStream, 'close', { signal })
+        } catch {}
         await rm(tmpFile, { force: true })
         return await fetch(url, requestBaseOptions, proxyUrl)
       }
@@ -194,13 +257,20 @@ async function downloadFileInChunks (
       for await (const chunk of res) {
         assert(Buffer.isBuffer(chunk))
         downSize += chunk.length
-        writeStream.write(chunk)
+        if (!writeStream.write(chunk)) {
+          try {
+            await once(writeStream, 'drain', { signal })
+          } catch (e) {
+            const reason = signal.reason as unknown
+            throw reason instanceof Error ? reason : (e as Error)
+          }
+        }
       }
       res.destroy()
     } catch (error) {
-      const err = error as Error
+      const err = error instanceof Error ? error : new Error(String(error))
       if (--retries <= 0) {
-        writeStream.close()
+        writeStream.destroy()
         void rm(tmpFile, { force: true })
         throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
       }
@@ -208,14 +278,24 @@ async function downloadFileInChunks (
     chunkSeq++
     start = downSize
   }
-  writeStream.close()
+
+  writeStream.end()
+  try {
+    await once(writeStream, 'finish', { signal })
+  } catch (e) {
+    const reason = signal.reason as unknown
+    if (reason instanceof Error) {
+      throw reason
+    }
+    throw e
+  } finally {
+    writeStream.off('error', onWriteError)
+  }
 
   const readStream = createReadStream(tmpFile)
-  readStream
-    .once('end', () => readStream.close())
-    .once('close', () => {
-      void rm(tmpFile, { force: true })
-    })
+  readStream.once('close', () => {
+    rm(tmpFile, { force: true }).catch(() => {})
+  })
   return readStream
 }
 
@@ -234,15 +314,14 @@ function setProxy (options: RequestOptions, proxyUrl?: string): void {
   }
 }
 
-
 function parseContentRange (contentRange: string): { start: number, end: number, total: number } {
   const matches = contentRange.match(/bytes (\d+)-(\d+)\/(\d+)/)
   if (!matches) {
     throw new Error('Invalid content range')
   }
   return {
-    start: Number(matches[1]),
     end: Number(matches[2]),
+    start: Number(matches[1]),
     total: Number(matches[3]),
   }
 }

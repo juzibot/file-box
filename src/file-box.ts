@@ -385,10 +385,10 @@ class FileBox implements Pipeable, FileBoxInterface {
 
       case FileBoxType.Url:
         fileBox = this.fromUrl(obj.url, {
+          headers: obj.headers,
           md5: obj.md5,
           name: obj.name,
           size: obj.size,
-          headers: obj.headers,
         })
         break
 
@@ -510,12 +510,12 @@ class FileBox implements Pipeable, FileBoxInterface {
   private readonly qrCode?    : string
   private readonly uuid?      : string
 
-  get url() {
+  get url () {
     return this.remoteUrl
   }
 
   private proxyUrl?: string
-  useProxyUrl(url?: string) {
+  useProxyUrl (url?: string) {
     this.proxyUrl = url
   }
 
@@ -618,7 +618,7 @@ class FileBox implements Pipeable, FileBoxInterface {
 
   async ready (): Promise<void> {
     let tryCount = 0
-    while (1) {
+    while (true) {
       try {
         switch (this.type) {
           case FileBoxType.Url:
@@ -636,7 +636,7 @@ class FileBox implements Pipeable, FileBoxInterface {
         }
         break
       } catch (e) {
-        tryCount ++
+        tryCount++
         if (tryCount >= READY_RETRY) {
           throw e
         }
