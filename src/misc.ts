@@ -9,10 +9,10 @@ import { HttpsProxyAgent } from 'https-proxy-agent'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { Readable } from 'stream'
+import { pipeline } from 'stream/promises'
 import { URL } from 'url'
 
 import {
-  HTTP_CHUNK_SIZE,
   HTTP_REQUEST_TIMEOUT,
   HTTP_RESPONSE_TIMEOUT,
 } from './config.js'
@@ -110,10 +110,9 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
 
   // 运行时读取 env：方便测试/调用方动态调整
   const noSliceDown = process.env['FILEBOX_NO_SLICE_DOWN'] === 'true'
-  const chunkSize = Number(process.env['FILEBOX_HTTP_CHUNK_SIZE']) || HTTP_CHUNK_SIZE
 
-  if (!unsupportedRangeDomains.has(hostname) && !noSliceDown && headHeaders['accept-ranges'] === 'bytes' && fileSize > chunkSize) {
-    return await downloadFileInChunks(url, options, fileSize, chunkSize, proxyUrl)
+  if (!unsupportedRangeDomains.has(hostname) && !noSliceDown) {
+    return await downloadFileInChunks(url, options, fileSize, proxyUrl)
   } else {
     return await fetch(url, options, proxyUrl)
   }
@@ -203,7 +202,6 @@ async function downloadFileInChunks (
   url: string,
   options: http.RequestOptions,
   fileSize: number,
-  chunkSize = HTTP_CHUNK_SIZE,
   proxyUrl?: string,
 ): Promise<Readable> {
   const tmpFile = join(tmpdir(), `filebox-${randomUUID()}`)
@@ -219,18 +217,18 @@ async function downloadFileInChunks (
     headers: {},
     ...options,
   }
-  let chunkSeq = 0
   let start = 0
-  let end = 0
   let downSize = 0
-  let retries = 3
 
-  while (downSize < fileSize) {
-    end = Math.min(start + chunkSize, fileSize - 1)
-    const range = `bytes=${start}-${end}`
+  do {
+    const range = `bytes=${start}-`
     const requestOptions = Object.assign({}, requestBaseOptions)
     assert(requestOptions.headers, 'Errors that should not happen: Invalid headers')
     ;(requestOptions.headers as http.OutgoingHttpHeaders)['Range'] = range
+
+    // 每次请求创建独立的 AbortController 来管理当前请求的生命周期
+    const requestAbortController = new AbortController()
+    requestOptions.signal = requestAbortController.signal
 
     try {
       const res = await fetch(url, requestOptions, proxyUrl)
@@ -245,39 +243,51 @@ async function downloadFileInChunks (
         return await fetch(url, requestBaseOptions, proxyUrl)
       }
       assert(allowStatusCode.includes(res.statusCode ?? 0), `Request failed with status code ${res.statusCode}`)
-      assert(Number(res.headers['content-length']) > 0, 'Server returned 0 bytes of data')
-      try {
-        const { total } = parseContentRange(res.headers['content-range'] ?? '')
-        if (total > 0 && total < fileSize) {
+      const contentLength = Number(res.headers['content-length'])
+      assert(contentLength > 0, 'Server returned 0 bytes of data')
+
+      // 206: 部分内容，继续分片下载
+      // 200: 完整内容，服务器不支持 range 或返回全部数据
+      if (res.statusCode === 206) {
+        const { end, total } = parseContentRange(res.headers['content-range'] ?? '')
+        if (total > 0 && total !== fileSize) {
           // 某些云服务商（如腾讯云）在 head 方法中返回的 size 是原图大小，但下载时返回的是压缩后的图片，会比原图小。
           // 这种在首次下载时虽然请求了原图大小的范围，可能比缩略图大，但会一次性返回完整的原图，而不是报错 416，通过修正 fileSize 跳出循环即可。
           fileSize = total
         }
-      } catch (error) {}
-      for await (const chunk of res) {
-        assert(Buffer.isBuffer(chunk))
-        downSize += chunk.length
-        if (!writeStream.write(chunk)) {
+        // 使用 pipeline，但不关闭 writeStream（继续下载下一个分片）
+        await pipeline(res, writeStream, { end: false, signal })
+        // 根据 content-range 更新已下载字节数
+        // end 是最后一个字节的索引，下次从 end+1 开始
+        downSize += end - start + 1
+        start = end + 1
+      } else {
+        // 200: 服务器返回完整文件，不支持 range
+        if (start > 0) {
+          // 中途收到 200，服务器停止支持 range，标记并回退到普通下载
+          unsupportedRangeDomains.add(new URL(url).hostname)
+          writeStream.destroy()
           try {
-            await once(writeStream, 'drain', { signal })
-          } catch (e) {
-            const reason = signal.reason as unknown
-            throw reason instanceof Error ? reason : (e as Error)
-          }
+            await once(writeStream, 'close', { signal })
+          } catch {}
+          await rm(tmpFile, { force: true })
+          return await fetch(url, requestBaseOptions, proxyUrl)
         }
+        // 首次请求返回 200，正常处理
+        await pipeline(res, writeStream, { signal })
+        downSize = contentLength
+        break
       }
-      res.destroy()
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
-      if (--retries <= 0) {
-        writeStream.destroy()
-        void rm(tmpFile, { force: true })
-        throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
-      }
+      writeStream.destroy()
+      await rm(tmpFile, { force: true })
+      throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
+    } finally {
+      // 确保请求被清理（成功时也需要 abort 以释放资源）
+      requestAbortController.abort()
     }
-    chunkSeq++
-    start = downSize
-  }
+  } while (downSize < fileSize)
 
   writeStream.end()
   try {

@@ -26,6 +26,14 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
 
   /* eslint @typescript-eslint/no-misused-promises:off */
   const server = createServer(async (req, res) => {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Length': '100',
+      })
+      res.end()
+      return
+    }
+
     res.write(Buffer.from('This is the first chunk of data.'))
 
     if (req.url === URL.NOT_TIMEOUT) {
@@ -63,6 +71,9 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
     const dataSpy = sandbox.spy()
     const errorSpy = sandbox.spy()
 
+    // Disable chunked download for timeout tests
+    process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
+
     // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
     const start = Date.now()
     const stream = await FileBox.fromUrl(url).toStream()
@@ -93,6 +104,9 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
     const url = `${host}${URL.TIMEOUT}`
     const dataSpy = sandbox.spy()
     const errorSpy = sandbox.spy()
+
+    // Disable chunked download for timeout tests
+    process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
 
     // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
     const start = Date.now()
@@ -131,6 +145,9 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
   t.test('ready should timeout', async (t) => {
     const url = `${host}${URL.READY}`
     const errorSpy = sandbox.spy()
+
+    // Disable chunked download for timeout tests
+    process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
 
     // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
     const start = Date.now()

@@ -123,6 +123,23 @@ test('should handle successful large file download', async (t) => {
 
 test('should handle HTTP errors correctly', async (t) => {
   const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      if (req.url === '/404') {
+        res.writeHead(404)
+        res.end()
+        return
+      }
+      if (req.url === '/500') {
+        res.writeHead(500)
+        res.end()
+        return
+      }
+      res.writeHead(200, {
+        'Content-Length': '100',
+      })
+      res.end()
+      return
+    }
     if (req.url === '/404') {
       res.writeHead(404)
       res.end('Not Found')
@@ -156,9 +173,33 @@ test('should handle HTTP errors correctly', async (t) => {
 })
 
 test('should clear timeout after successful request', async (t) => {
-  const server = createServer((_req, res) => {
+  const content = 'Success'
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Length': String(content.length),
+      })
+      res.end()
+      return
+    }
+    // Handle range requests
+    if (req.headers.range) {
+      const m = String(req.headers.range).match(/bytes=(\d+)-(\d*)/)
+      if (m) {
+        const start = Number(m[1])
+        const end = m[2] ? Number(m[2]) : content.length - 1
+        const chunk = content.slice(start, end + 1)
+        res.writeHead(206, {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(chunk.length),
+          'Content-Range': `bytes ${start}-${end}/${content.length}`,
+        })
+        res.end(chunk)
+        return
+      }
+    }
     res.writeHead(200, { 'Content-Type': 'text/plain' })
-    res.end('Success')
+    res.end(content)
   })
 
   const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
@@ -185,13 +226,42 @@ test('should clear timeout after successful request', async (t) => {
 })
 
 test('should handle redirects correctly', async (t) => {
+  const content = 'Final destination'
   const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      if (req.url === '/redirect') {
+        res.writeHead(302, { Location: '/final' })
+        res.end()
+        return
+      }
+      res.writeHead(200, {
+        'Content-Length': String(content.length),
+      })
+      res.end()
+      return
+    }
+    // Handle range requests
+    if (req.headers.range && req.url === '/final') {
+      const m = String(req.headers.range).match(/bytes=(\d+)-(\d*)/)
+      if (m) {
+        const start = Number(m[1])
+        const end = m[2] ? Number(m[2]) : content.length - 1
+        const chunk = content.slice(start, end + 1)
+        res.writeHead(206, {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(chunk.length),
+          'Content-Range': `bytes ${start}-${end}/${content.length}`,
+        })
+        res.end(chunk)
+        return
+      }
+    }
     if (req.url === '/redirect') {
       res.writeHead(302, { Location: '/final' })
       res.end()
     } else if (req.url === '/final') {
       res.writeHead(200)
-      res.end('Final destination')
+      res.end(content)
     }
   })
 
@@ -215,8 +285,32 @@ test('should handle redirects correctly', async (t) => {
 
 test('should handle multiple concurrent requests', async (t) => {
   const server = createServer((req, res) => {
+    const content = `Response for ${req.url}`
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Length': String(content.length),
+      })
+      res.end()
+      return
+    }
+    // Handle range requests
+    if (req.headers.range) {
+      const m = String(req.headers.range).match(/bytes=(\d+)-(\d*)/)
+      if (m) {
+        const start = Number(m[1])
+        const end = m[2] ? Number(m[2]) : content.length - 1
+        const chunk = content.slice(start, end + 1)
+        res.writeHead(206, {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(chunk.length),
+          'Content-Range': `bytes ${start}-${end}/${content.length}`,
+        })
+        res.end(chunk)
+        return
+      }
+    }
     res.writeHead(200, { 'Content-Type': 'text/plain' })
-    res.end(`Response for ${req.url}`)
+    res.end(content)
   })
 
   const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
