@@ -2,7 +2,7 @@ import assert from 'assert'
 import { randomUUID } from 'crypto'
 import { once } from 'events'
 import { createReadStream, createWriteStream } from 'fs'
-import { rm } from 'fs/promises'
+import { rm, stat } from 'fs/promises'
 import http, { RequestOptions } from 'http'
 import https from 'https'
 import { HttpsProxyAgent } from 'https-proxy-agent'
@@ -111,7 +111,10 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   // 运行时读取 env：方便测试/调用方动态调整
   const noSliceDown = process.env['FILEBOX_NO_SLICE_DOWN'] === 'true'
 
-  if (!unsupportedRangeDomains.has(hostname) && !noSliceDown) {
+  // 检查服务器是否支持 range 请求
+  const supportsRange = headHeaders['accept-ranges'] === 'bytes'
+
+  if (!unsupportedRangeDomains.has(hostname) && !noSliceDown && supportsRange && fileSize > 0) {
     return await downloadFileInChunks(url, options, fileSize, proxyUrl)
   } else {
     return await fetch(url, options, proxyUrl)
@@ -219,6 +222,7 @@ async function downloadFileInChunks (
   }
   let start = 0
   let downSize = 0
+  let retries = 3
 
   do {
     const range = `bytes=${start}-`
@@ -249,7 +253,16 @@ async function downloadFileInChunks (
       // 206: 部分内容，继续分片下载
       // 200: 完整内容，服务器不支持 range 或返回全部数据
       if (res.statusCode === 206) {
-        const { end, total } = parseContentRange(res.headers['content-range'] ?? '')
+        let end = start + contentLength - 1
+        let total = 0
+        try {
+          const parsed = parseContentRange(res.headers['content-range'] ?? '')
+          end = parsed.end
+          total = parsed.total
+        } catch (error) {
+          // Content-Range 解析失败，使用 content-length 推算
+          // 这可能发生在服务器返回无效的 content-range 格式时
+        }
         if (total > 0 && total !== fileSize) {
           // 某些云服务商（如腾讯云）在 head 方法中返回的 size 是原图大小，但下载时返回的是压缩后的图片，会比原图小。
           // 这种在首次下载时虽然请求了原图大小的范围，可能比缩略图大，但会一次性返回完整的原图，而不是报错 416，通过修正 fileSize 跳出循环即可。
@@ -257,10 +270,10 @@ async function downloadFileInChunks (
         }
         // 使用 pipeline，但不关闭 writeStream（继续下载下一个分片）
         await pipeline(res, writeStream, { end: false, signal })
-        // 根据 content-range 更新已下载字节数
+        // pipeline 成功后才更新下载进度
         // end 是最后一个字节的索引，下次从 end+1 开始
         downSize += end - start + 1
-        start = end + 1
+        start = downSize
       } else {
         // 200: 服务器返回完整文件，不支持 range
         if (start > 0) {
@@ -278,11 +291,27 @@ async function downloadFileInChunks (
         downSize = contentLength
         break
       }
+      // 成功后重置重试次数
+      retries = 3
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
-      writeStream.destroy()
-      await rm(tmpFile, { force: true })
-      throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
+      if (--retries <= 0) {
+        writeStream.destroy()
+        await rm(tmpFile, { force: true })
+        throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
+      }
+      // pipeline 失败时，检查临时文件实际大小，确保断点续传位置正确
+      try {
+        const fileStats = await stat(tmpFile)
+        const actualSize = fileStats.size
+        // 更新 start 和 downSize 为实际写入的位置
+        start = actualSize
+        downSize = actualSize
+      } catch {
+        // 文件不存在或无法读取，保持当前位置不变，重新尝试
+      }
+      // 失败后等待一小段时间再重试
+      await new Promise(resolve => setTimeout(resolve, 100))
     } finally {
       // 确保请求被清理（成功时也需要 abort 以释放资源）
       requestAbortController.abort()
