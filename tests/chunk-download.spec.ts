@@ -7,10 +7,6 @@ import { test } from 'tstest'
 
 import { httpStream, streamToBuffer } from '../src/misc.js'
 
-// chunk-download 测试专门测试分片功能，但移除 Accept-Ranges 检查后会导致超时
-// 暂时禁用分片以避免超时，需要修复测试服务器实现
-process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
-
 test('should download file in chunks with range support', async (t) => {
   const FILE_SIZE = 1024 * 1024 // 1MB
   const fileContent = Buffer.alloc(FILE_SIZE, 'X')
