@@ -12,6 +12,11 @@ import {
   httpStream,
   streamToBuffer,
 } from './misc.js'
+import { CONFIG } from './config.js'
+
+// 设置短超时用于测试
+CONFIG.HTTP_REQUEST_TIMEOUT = 1000
+CONFIG.HTTP_RESPONSE_TIMEOUT = 1000
 
 test('dataUrl to base64', async t => {
   const base64 = [

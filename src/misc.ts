@@ -260,13 +260,13 @@ async function downloadFileInChunks (
     try {
       const fileStats = await stat(tmpFile)
       const actualSize = fileStats.size
-      if (actualSize > downSize) {
-        // 文件实际大小比记录的大，说明之前有部分写入
+      if (actualSize !== downSize) {
+        // 文件实际大小与记录的不一致，使用实际大小
         downSize = actualSize
         start = actualSize
       }
     } catch (error) {
-      // 文件不存在或无法访问，使用当前的 downSize
+      // 文件不存在或无法访问，downSize 保持不变（回退时已重置为 0）
     }
 
     const requestOptions = Object.assign({}, requestBaseOptions)
