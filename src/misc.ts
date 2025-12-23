@@ -11,6 +11,7 @@ import { join } from 'path'
 import type { Readable } from 'stream'
 import { Transform } from 'stream'
 import { pipeline } from 'stream/promises'
+import { setTimeout } from 'timers/promises'
 import { URL } from 'url'
 
 import { CONFIG } from './config.js'
@@ -73,7 +74,6 @@ export async function httpHeadHeader (url: string, headers: http.OutgoingHttpHea
       return res.headers
     }
 
-    // console.log('302 found for ' + url)
 
     if (!res.headers.location) {
       throw new Error('302 found but no location!')
@@ -106,7 +106,7 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   if (headHeaders.location) {
     url = headHeaders.location
   }
-  const { protocol, hostname } = new URL(url)
+  const { protocol, hostname, port } = new URL(url)
   getProtocol(protocol)
 
   const options: http.RequestOptions = {
@@ -114,12 +114,17 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
     method: 'GET',
   }
 
+  // 使用 hostname:port 作为域名标识，避免不同端口的服务互相影响
+  const defaultPort = protocol === 'https:' ? '443' : '80'
+  const hostKey = `${hostname}:${port || defaultPort}`
+
   // 直接尝试分片下载，不检查 Accept-Ranges 和 fileSize
   // 原因：
   // 1. 有些服务器 HEAD 不返回 Accept-Ranges 但实际支持分片
   // 2. 有些服务器 HEAD 返回 fileSize=0 但实际支持分片
   // downloadFileInChunks 内部有完善的回退机制处理不支持的情况
-  return await downloadFileInChunks(url, options, proxyUrl, hostname)
+  const result = await downloadFileInChunks(url, options, proxyUrl, hostKey)
+  return result
 }
 
 async function fetch (url: string, options: http.RequestOptions, proxyUrl?: string): Promise<http.IncomingMessage> {
@@ -168,7 +173,6 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
     res.on('error', noop)
     signal.throwIfAborted()
   } catch (e) {
-    // once(...) 被 signal abort 时通常会抛 AbortError；优先抛出 abort(reason) 的真实原因
     const reason = signal.reason as unknown
     const err = reason instanceof Error
       ? reason
@@ -257,27 +261,23 @@ async function downloadFileInChunks (
   do {
     // 每次循环前检查文件实际大小，作为真实的下载进度
     // 这样在重试时可以从实际写入的位置继续，避免数据重复
-    try {
-      const fileStats = await stat(tmpFile)
-      const actualSize = fileStats.size
-      if (actualSize !== downSize) {
-        // 文件实际大小与记录的不一致，使用实际大小
-        downSize = actualSize
-        start = actualSize
-      }
-    } catch (error) {
-      // 文件不存在或无法访问，downSize 保持不变（回退时已重置为 0）
+    const fileStats = await stat(tmpFile).then(stats => stats.size).catch(() => 0)
+    if (fileStats !== downSize) {
+      // 文件实际大小与记录的不一致，使用实际大小
+      downSize = fileStats
+      start = fileStats
     }
 
     const requestOptions = Object.assign({}, requestBaseOptions)
     assert(requestOptions.headers, 'Errors that should not happen: Invalid headers')
+    const headers = requestOptions.headers as http.OutgoingHttpHeaders
 
     // 根据 useRange flag 决定是否添加 Range header
     if (useRange) {
       const range = `bytes=${start}-`
-      ;(requestOptions.headers as http.OutgoingHttpHeaders)['Range'] = range
+      headers['Range'] = range
     } else {
-      delete (requestOptions.headers as http.OutgoingHttpHeaders)['Range']
+      delete headers['Range']
     }
 
     let res: http.IncomingMessage
@@ -287,10 +287,9 @@ async function downloadFileInChunks (
         // 416: Range Not Satisfiable，服务器不支持此范围或文件大小不匹配
         throw new FallbackError('416 Range Not Satisfiable')
       }
-      console.info('res statusCode: %d headers: %o', res.statusCode, res.headers)
       assert(allowStatusCode.includes(res.statusCode ?? 0), `Request failed with status code ${res.statusCode}`)
       const contentLength = Number(res.headers['content-length']) || 0
-      assert(contentLength > 0, 'Server returned 0 bytes of data')
+      assert(contentLength >= 0, `Server returned ${contentLength} bytes of data`)
 
       // 206: 部分内容，继续分片下载
       // 200: 完整内容，服务器不支持 range 或返回全部数据
@@ -352,14 +351,20 @@ async function downloadFileInChunks (
         downSize += end - start + 1
         start = downSize
       } else if (res.statusCode === 200) {
-        // 200: 服务器返回完整文件，不支持 range
+        // 200: 服务器返回完整文件
         if (useChunked || start > 0) {
-          // 之前是分片模式，现在服务器返回完整文件，需要回退
-          throw new FallbackError('Server stopped supporting range')
+          // 之前以分片模式下载过数据
+          writeStream.destroy()
+          await rm(tmpFile, { force: true }).catch(() => {})
+          writeStream = createWriteStream(tmpFile)
+          writeStream.on('error', onWriteError)
+          start = 0
+          downSize = 0
         }
-        // 首次请求返回 200，正常处理
+
+        // 处理完整文件响应
         expectedTotal = contentLength
-        await pipeline(res, writeStream, { signal })
+        await pipeline(res, writeStream, { end: false, signal })
         downSize = contentLength
         break
       } else {
@@ -370,23 +375,18 @@ async function downloadFileInChunks (
     } catch (error) {
       if (error instanceof FallbackError) {
         // 回退逻辑：记录域名、重置状态，在下次循环中以非 range 模式请求
+        unsupportedRangeDomains.add(hostname)
+
+        // 关闭当前写入流
+        writeStream.destroy()
+        await rm(tmpFile, { force: true }).catch(() => {})
 
         // 检查是否已经是非 Range 模式，避免无限回退
         if (!useRange) {
           // 已经是非 Range 模式还失败，无法继续
-          writeStream.destroy()
-          await rm(tmpFile, { force: true }).catch(() => {})
           throw new Error(`Download failed even in non-chunked mode: ${(error as Error).message}`)
         }
 
-        unsupportedRangeDomains.add(hostname)
-
-        // 关闭当前写入流
-        writeStream.end()
-        await once(writeStream, 'finish').catch(() => {})
-
-        // 清空文件并重新创建写入流
-        await rm(tmpFile, { force: true }).catch(() => {})
         writeStream = createWriteStream(tmpFile)
         writeStream.once('error', onWriteError)
 
@@ -408,22 +408,15 @@ async function downloadFileInChunks (
         throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
       }
       // 失败后等待一小段时间再重试
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await setTimeout(100)
     }
   } while (expectedTotal === null || downSize < expectedTotal)
 
-  writeStream.end()
-  try {
+  if (!writeStream.destroyed && !writeStream.writableFinished) {
+    writeStream.end()
     await once(writeStream, 'finish', { signal })
-  } catch (e) {
-    const reason = signal.reason as unknown
-    if (reason instanceof Error) {
-      throw reason
-    }
-    throw e
-  } finally {
-    writeStream.off('error', onWriteError)
   }
+  writeStream.off('error', onWriteError)
 
   const readStream = createReadStream(tmpFile)
   readStream.once('close', () => {

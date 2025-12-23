@@ -3,157 +3,146 @@
 import { createServer } from 'http'
 import type { AddressInfo } from 'net'
 import { setTimeout } from 'timers/promises'
-import { sinon, test } from 'tstest'
+import { test } from 'tstest'
 
 import { CONFIG } from '../src/config.js'
 import { FileBox } from '../src/mod.js'
 
-test('slow network stall HTTP_TIMEOUT', async (t) => {
-  const sandbox = sinon.createSandbox()
-  sandbox.useFakeTimers({
-    now: Date.now(),
-    shouldAdvanceTime: true,
-    shouldClearNativeTimers: true,
-    toFake: [ 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'nextTick' ],
-  })
-  t.jobs = 3
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-  const URL = {
-    NOT_TIMEOUT: '/not_timeout',
-    READY: '/ready',
-    TIMEOUT: '/timeout',
-  }
-
-  /* eslint @typescript-eslint/no-misused-promises:off */
-  const server = createServer(async (req, res) => {
-    if (req.method === 'HEAD') {
-      res.writeHead(200, {
-        'Content-Length': '100',
-      })
-      res.end()
-      return
-    }
-
-    res.write(Buffer.from('This is the first chunk of data.'))
-
-    if (req.url === URL.NOT_TIMEOUT) {
-      await setTimeout(CONFIG.HTTP_REQUEST_TIMEOUT * 0.5)
-      res.write(Buffer.from('This is the second chunk of data.'))
-    } else if (req.url === URL.READY) {
-      await setTimeout(CONFIG.HTTP_REQUEST_TIMEOUT + 100)
-    } else if (req.url === URL.TIMEOUT) {
-      if (req.method === 'GET') {
-        await setTimeout(CONFIG.HTTP_RESPONSE_TIMEOUT + 100)
-      }
-    }
-
-    // console.debug(`${new Date().toLocaleTimeString()} call res.end "${req.url}"`)
-    res.end(Buffer.from('All data end.'))
-  })
-
-  const host = await new Promise<string>((resolve) => {
-    server.listen(port, '127.0.0.1', () => {
-      const addr = server.address() as AddressInfo
-      // console.debug(`Server is listening on port ${JSON.stringify(addr)}`)
-      resolve(`http://127.0.0.1:${addr.port}`)
-    })
-  })
+test('HTTP timeout handling', async (t) => {
+  // 设置短超时用于快速测试
+  const originalRequestTimeout = CONFIG.HTTP_REQUEST_TIMEOUT
+  const originalResponseTimeout = CONFIG.HTTP_RESPONSE_TIMEOUT
+  CONFIG.HTTP_REQUEST_TIMEOUT = 200   // 200ms
+  CONFIG.HTTP_RESPONSE_TIMEOUT = 300  // 300ms
 
   t.teardown(() => {
-    // console.debug('teardown')
-    server.close()
-    sandbox.restore()
+    CONFIG.HTTP_REQUEST_TIMEOUT = originalRequestTimeout
+    CONFIG.HTTP_RESPONSE_TIMEOUT = originalResponseTimeout
   })
 
-  /** eslint @typescript-eslint/no-floating-promises:off */
-  t.test('should not timeout', async (t) => {
-    const url = `${host}${URL.NOT_TIMEOUT}`
-    const dataSpy = sandbox.spy()
-    const errorSpy = sandbox.spy()
+  await t.test('should complete download without timeout', async (t) => {
+    const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
+    const testData = 'Test data for no timeout'
 
-    // Disable chunked download for timeout tests
+    const server = createServer((req, res) => {
+      if (req.method === 'HEAD') {
+        res.writeHead(200, { 'Content-Length': String(testData.length) })
+        res.end()
+        return
+      }
 
-    // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
-    const start = Date.now()
-    const stream = await FileBox.fromUrl(url).toStream()
-
-    stream.once('error', errorSpy).on('data', dataSpy)
-
-    await sandbox.clock.tickAsync(1)
-    t.ok(dataSpy.calledOnce, `should get chunk 1 (${Date.now() - start} passed)`)
-    t.ok(errorSpy.notCalled, `should not get error (${Date.now() - start} passed)`)
-
-    // FIXME: tickAsync does not work on socket timeout
-    await new Promise<void>((resolve) => {
-      stream.once('error', resolve).on('close', resolve)
-      // resolve(setTimeout(CONFIG.HTTP_REQUEST_TIMEOUT))
+      // 服务器不支持 Range，直接返回 200
+      // 快速响应，不应该超时
+      res.writeHead(200, { 'Content-Length': String(testData.length) })
+      res.end(testData)
     })
-    await sandbox.clock.tickAsync(1)
-    // await sandbox.clock.tickAsync(CONFIG.HTTP_RESPONSE_TIMEOUT)
 
-    t.comment('recv data count:', dataSpy.callCount)
-    t.comment('recv error count:', errorSpy.callCount)
-    t.ok(dataSpy.calledThrice, `should get chunk 3 after TIMEOUT ${CONFIG.HTTP_REQUEST_TIMEOUT} (${Date.now() - start} passed)`)
-    t.ok(errorSpy.notCalled, `should not get error after TIMEOUT ${CONFIG.HTTP_REQUEST_TIMEOUT} (${Date.now() - start} passed)`)
-    t.end()
-  }).catch(t.threw)
-
-  /** eslint @typescript-eslint/no-floating-promises:off */
-  t.test('should timeout', { skip: 'FIXME: fake timers cannot simulate socket timeout' }, async (t) => {
-    const url = `${host}${URL.TIMEOUT}`
-    const dataSpy = sandbox.spy()
-    const errorSpy = sandbox.spy()
-
-    // Disable chunked download for timeout tests
-
-    // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
-    const start = Date.now()
-    const stream = await FileBox.fromUrl(url).toStream()
-
-    stream.once('error', errorSpy).once('data', dataSpy)
-    // .on('error', (e) => {
-    //   console.error(`on error for req "${url}":`, e.stack)
-    // })
-    // .on('data', (d: Buffer) => {
-    //   console.error(`on data for req "${url}":`, d.toString())
-    // })
-
-    await sandbox.clock.tickAsync(1)
-
-    // t.comment('recv data count:', dataSpy.callCount)
-    // t.comment('recv error count:', errorSpy.callCount)
-    t.ok(dataSpy.calledOnce, `should get chunk 1 (${Date.now() - start} passed)`)
-    t.ok(errorSpy.notCalled, `should not get error (${Date.now() - start} passed)`)
-
-    // FIXME: tickAsync does not work on socket timeout
     await new Promise<void>((resolve) => {
-      stream.once('error', resolve).on('close', resolve)
-      // resolve(setTimeout(CONFIG.HTTP_RESPONSE_TIMEOUT))
+      server.listen(port, '127.0.0.1', resolve)
     })
-    await sandbox.clock.tickAsync(1)
-    // await sandbox.clock.tickAsync(CONFIG.HTTP_RESPONSE_TIMEOUT)
 
-    // t.comment('recv data count:', dataSpy.callCount)
-    // t.comment('recv error count:', errorSpy.callCount)
-    t.ok(errorSpy.calledOnce, `should get error after TIMEOUT ${CONFIG.HTTP_RESPONSE_TIMEOUT} (${Date.now() - start} passed)`)
-    t.end()
-  }).catch(t.threw)
+    t.teardown(() => { server.close() })
 
-  /** eslint @typescript-eslint/no-floating-promises:off */
-  t.test('ready should timeout', { skip: 'FIXME: fake timers cannot simulate socket timeout' }, async (t) => {
-    const url = `${host}${URL.READY}`
-    const errorSpy = sandbox.spy()
-
-    // Disable chunked download for timeout tests
-
-    // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
-    const start = Date.now()
+    const url = `http://127.0.0.1:${port}/test`
     const fileBox = FileBox.fromUrl(url)
-    await fileBox.ready().catch(errorSpy)
+    const stream = await fileBox.toStream()
 
-    await sandbox.clock.tickAsync(1)
-    // t.comment('recv error count:', errorSpy.callCount)
-    t.ok(errorSpy.calledOnce, `should get error after TIMEOUT ${CONFIG.HTTP_REQUEST_TIMEOUT} (${Date.now() - start} passed)`)
+    const chunks: Buffer[] = []
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk))
+
+    await new Promise<void>((resolve, reject) => {
+      stream.on('end', resolve)
+      stream.on('error', reject)
+    })
+
+    const result = Buffer.concat(chunks).toString()
+    t.equal(result, testData, 'should receive complete data')
     t.end()
-  }).catch(t.threw)
+  })
+
+  await t.test('should handle response timeout', async (t) => {
+    const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
+
+    const server = createServer((req, res) => {
+      if (req.method === 'HEAD') {
+        res.writeHead(200, { 'Content-Length': '100' })
+        res.end()
+        return
+      }
+
+      // 发送部分数据后停止，不调用 res.end()
+      // 让连接挂起，Socket 会在 HTTP_RESPONSE_TIMEOUT 后超时
+      res.writeHead(200, { 'Content-Length': '100' })
+      res.write('Partial data...')
+      // 不调用 res.end()
+    })
+
+    await new Promise<void>((resolve) => {
+      server.listen(port, '127.0.0.1', resolve)
+    })
+
+    t.teardown(() => { server.close() })
+
+    const url = `http://127.0.0.1:${port}/timeout`
+
+    try {
+      const fileBox = FileBox.fromUrl(url)
+      const stream = await fileBox.toStream()
+
+      const chunks: Buffer[] = []
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk))
+        stream.on('end', resolve)
+        stream.on('error', reject)
+      })
+
+      t.fail('should have thrown timeout error')
+    } catch (error) {
+      const err = error as Error
+      t.ok(err.message.includes('timeout'), `should timeout with error: ${err.message}`)
+    }
+
+    t.end()
+  })
+
+  await t.test('should handle request timeout', async (t) => {
+    const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
+    let requestReceived = false
+
+    /* eslint @typescript-eslint/no-misused-promises:off */
+    const server = createServer(async (req, res) => {
+      if (req.method === 'HEAD') {
+        res.writeHead(200, { 'Content-Length': '100' })
+        res.end()
+        return
+      }
+
+      requestReceived = true
+      // 延迟响应超过 HTTP_REQUEST_TIMEOUT
+      // 在发送任何数据之前延迟，触发 request timeout
+      await setTimeout(CONFIG.HTTP_REQUEST_TIMEOUT + 100)
+      res.writeHead(200, { 'Content-Length': '10' })
+      res.end('Too late')
+    })
+
+    await new Promise<void>((resolve) => {
+      server.listen(port, '127.0.0.1', resolve)
+    })
+
+    t.teardown(() => { server.close() })
+
+    const url = `http://127.0.0.1:${port}/request-timeout`
+
+    try {
+      const fileBox = FileBox.fromUrl(url)
+      await fileBox.toStream()
+      t.fail('should have thrown timeout error')
+    } catch (error) {
+      const err = error as Error
+      t.ok(requestReceived, 'should have received request')
+      t.ok(err.message.includes('timeout'), `should timeout with error: ${err.message}`)
+    }
+
+    t.end()
+  })
 })
