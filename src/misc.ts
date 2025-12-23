@@ -225,6 +225,20 @@ async function downloadFileInChunks (
   let retries = 3
 
   do {
+    // 每次循环前检查文件实际大小，作为真实的下载进度
+    // 这样在重试时可以从实际写入的位置继续，避免数据重复
+    try {
+      const fileStats = await stat(tmpFile)
+      const actualSize = fileStats.size
+      if (actualSize > downSize) {
+        // 文件实际大小比记录的大，说明之前有部分写入
+        downSize = actualSize
+        start = actualSize
+      }
+    } catch (error) {
+      // 文件不存在或无法访问，使用当前的 downSize
+    }
+
     const range = `bytes=${start}-`
     const requestOptions = Object.assign({}, requestBaseOptions)
     assert(requestOptions.headers, 'Errors that should not happen: Invalid headers')
@@ -299,16 +313,6 @@ async function downloadFileInChunks (
         writeStream.destroy()
         await rm(tmpFile, { force: true })
         throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
-      }
-      // pipeline 失败时，检查临时文件实际大小，确保断点续传位置正确
-      try {
-        const fileStats = await stat(tmpFile)
-        const actualSize = fileStats.size
-        // 更新 start 和 downSize 为实际写入的位置
-        start = actualSize
-        downSize = actualSize
-      } catch {
-        // 文件不存在或无法读取，保持当前位置不变，重新尝试
       }
       // 失败后等待一小段时间再重试
       await new Promise(resolve => setTimeout(resolve, 100))
