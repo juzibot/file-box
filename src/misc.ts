@@ -226,6 +226,27 @@ function createSkipTransform (skipBytes: number): Transform {
   })
 }
 
+/**
+ * 回退到非分片下载
+ * 标记域名为不支持分片，清理临时文件，使用普通方式下载
+ */
+async function fallbackToNonChunkedDownload (
+  url: string,
+  writeStream: ReturnType<typeof createWriteStream>,
+  tmpFile: string,
+  signal: AbortSignal,
+  requestOptions: http.RequestOptions,
+  proxyUrl?: string,
+): Promise<Readable> {
+  unsupportedRangeDomains.add(new URL(url).hostname)
+  writeStream.destroy()
+  try {
+    await once(writeStream, 'close', { signal })
+  } catch {}
+  await rm(tmpFile, { force: true })
+  return await fetch(url, requestOptions, proxyUrl)
+}
+
 async function downloadFileInChunks (
   url: string,
   options: http.RequestOptions,
@@ -277,14 +298,8 @@ async function downloadFileInChunks (
     try {
       const res = await fetch(url, requestOptions, proxyUrl)
       if (res.statusCode === 416) {
-        unsupportedRangeDomains.add(new URL(url).hostname)
         // 某些云服务商对分片下载的支持可能不规范，需要保留一个回退的方式
-        writeStream.destroy()
-        try {
-          await once(writeStream, 'close', { signal })
-        } catch {}
-        await rm(tmpFile, { force: true })
-        return await fetch(url, requestBaseOptions, proxyUrl)
+        return await fallbackToNonChunkedDownload(url, writeStream, tmpFile, signal, requestBaseOptions, proxyUrl)
       }
       assert(allowStatusCode.includes(res.statusCode ?? 0), `Request failed with status code ${res.statusCode}`)
       const contentLength = Number(res.headers['content-length'])
@@ -297,13 +312,7 @@ async function downloadFileInChunks (
         const contentRange = res.headers['content-range']
         if (!contentRange) {
           // Content-Range 缺失，服务器不规范，回退到非分片下载
-          unsupportedRangeDomains.add(new URL(url).hostname)
-          writeStream.destroy()
-          try {
-            await once(writeStream, 'close', { signal })
-          } catch {}
-          await rm(tmpFile, { force: true })
-          return await fetch(url, requestBaseOptions, proxyUrl)
+          return await fallbackToNonChunkedDownload(url, writeStream, tmpFile, signal, requestBaseOptions, proxyUrl)
         }
 
         let end: number
@@ -316,13 +325,7 @@ async function downloadFileInChunks (
           total = parsed.total
         } catch (error) {
           // Content-Range 格式错误，服务器不规范，回退到非分片下载
-          unsupportedRangeDomains.add(new URL(url).hostname)
-          writeStream.destroy()
-          try {
-            await once(writeStream, 'close', { signal })
-          } catch {}
-          await rm(tmpFile, { force: true })
-          return await fetch(url, requestBaseOptions, proxyUrl)
+          return await fallbackToNonChunkedDownload(url, writeStream, tmpFile, signal, requestBaseOptions, proxyUrl)
         }
 
         if (expectedTotal === null) {
@@ -362,13 +365,7 @@ async function downloadFileInChunks (
         // 200: 服务器返回完整文件，不支持 range
         if (start > 0) {
           // 中途收到 200，服务器停止支持 range，标记并回退到普通下载
-          unsupportedRangeDomains.add(new URL(url).hostname)
-          writeStream.destroy()
-          try {
-            await once(writeStream, 'close', { signal })
-          } catch {}
-          await rm(tmpFile, { force: true })
-          return await fetch(url, requestBaseOptions, proxyUrl)
+          return await fallbackToNonChunkedDownload(url, writeStream, tmpFile, signal, requestBaseOptions, proxyUrl)
         }
         // 首次请求返回 200，正常处理
         await pipeline(res, writeStream, { signal })
