@@ -293,27 +293,44 @@ async function downloadFileInChunks (
       // 206: 部分内容，继续分片下载
       // 200: 完整内容，服务器不支持 range 或返回全部数据
       if (res.statusCode === 206) {
-        let end = start + contentLength - 1
-        let total = 0
-        let actualStart = start // 服务器实际返回的起始位置
-        const contentRange = res.headers['content-range'] ?? ''
+        // 206 响应必须包含有效的 Content-Range 头（RFC 7233）
+        const contentRange = res.headers['content-range']
+        if (!contentRange) {
+          // Content-Range 缺失，服务器不规范，回退到非分片下载
+          unsupportedRangeDomains.add(new URL(url).hostname)
+          writeStream.destroy()
+          try {
+            await once(writeStream, 'close', { signal })
+          } catch {}
+          await rm(tmpFile, { force: true })
+          return await fetch(url, requestBaseOptions, proxyUrl)
+        }
+
+        let end: number
+        let total: number
+        let actualStart: number
         try {
           const parsed = parseContentRange(contentRange)
           actualStart = parsed.start
           end = parsed.end
           total = parsed.total
         } catch (error) {
-          // Content-Range 解析失败，使用 content-length 推算
-          // 这可能发生在服务器返回无效的 content-range 格式时
-          // fallback: 使用当前位置 + content-length 估算
+          // Content-Range 格式错误，服务器不规范，回退到非分片下载
+          unsupportedRangeDomains.add(new URL(url).hostname)
+          writeStream.destroy()
+          try {
+            await once(writeStream, 'close', { signal })
+          } catch {}
+          await rm(tmpFile, { force: true })
+          return await fetch(url, requestBaseOptions, proxyUrl)
         }
 
         if (expectedTotal === null) {
           // 首次获得文件总大小
           // 某些云服务商（如腾讯云）在 head 方法中返回的 size 是原图大小，但下载时返回的是压缩后的图片，会比原图小。
           // 这种在首次下载时虽然请求了原图大小的范围，可能比缩略图大，但会一次性返回完整的原图，而不是报错 416，通过修正 expectedTotal 跳出循环即可。
-          expectedTotal = total > 0 ? total : (start + contentLength)
-        } else if (total > 0 && total !== expectedTotal) {
+          expectedTotal = total
+        } else if (total !== expectedTotal) {
           // 服务器返回的文件总大小出现了变化
           throw new Error(`File size mismatch: expected ${expectedTotal}, but server returned ${total}`)
         }
