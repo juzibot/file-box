@@ -72,7 +72,6 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
     const errorSpy = sandbox.spy()
 
     // Disable chunked download for timeout tests
-    process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
 
     // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
     const start = Date.now()
@@ -106,7 +105,6 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
     const errorSpy = sandbox.spy()
 
     // Disable chunked download for timeout tests
-    process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
 
     // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
     const start = Date.now()
@@ -147,7 +145,6 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
     const errorSpy = sandbox.spy()
 
     // Disable chunked download for timeout tests
-    process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
 
     // console.debug(`${new Date().toLocaleTimeString()} Start request "${url}" ...`)
     const start = Date.now()

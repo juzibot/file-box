@@ -287,8 +287,9 @@ async function downloadFileInChunks (
         // 416: Range Not Satisfiable，服务器不支持此范围或文件大小不匹配
         throw new FallbackError('416 Range Not Satisfiable')
       }
+      console.info('res statusCode: %d headers: %o', res.statusCode, res.headers)
       assert(allowStatusCode.includes(res.statusCode ?? 0), `Request failed with status code ${res.statusCode}`)
-      const contentLength = Number(res.headers['content-length'])
+      const contentLength = Number(res.headers['content-length']) || 0
       assert(contentLength > 0, 'Server returned 0 bytes of data')
 
       // 206: 部分内容，继续分片下载
@@ -374,7 +375,7 @@ async function downloadFileInChunks (
         if (!useRange) {
           // 已经是非 Range 模式还失败，无法继续
           writeStream.destroy()
-          await rm(tmpFile, { force: true })
+          await rm(tmpFile, { force: true }).catch(() => {})
           throw new Error(`Download failed even in non-chunked mode: ${(error as Error).message}`)
         }
 
@@ -382,12 +383,10 @@ async function downloadFileInChunks (
 
         // 关闭当前写入流
         writeStream.end()
-        try {
-          await once(writeStream, 'finish')
-        } catch {}
+        await once(writeStream, 'finish').catch(() => {})
 
         // 清空文件并重新创建写入流
-        await rm(tmpFile, { force: true })
+        await rm(tmpFile, { force: true }).catch(() => {})
         writeStream = createWriteStream(tmpFile)
         writeStream.once('error', onWriteError)
 
@@ -405,7 +404,7 @@ async function downloadFileInChunks (
       const err = error instanceof Error ? error : new Error(String(error))
       if (--retries <= 0) {
         writeStream.destroy()
-        await rm(tmpFile, { force: true })
+        await rm(tmpFile, { force: true }).catch(() => {})
         throw new Error(`Download file with chunk failed! ${err.message}`, { cause: err })
       }
       // 失败后等待一小段时间再重试
