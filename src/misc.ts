@@ -9,6 +9,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { Readable } from 'stream'
+import { Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import { URL } from 'url'
 
@@ -269,14 +270,55 @@ async function downloadFileInChunks (
       if (res.statusCode === 206) {
         let end = start + contentLength - 1
         let total = 0
+        let actualStart = start // 服务器实际返回的起始位置
         try {
           const parsed = parseContentRange(res.headers['content-range'] ?? '')
+          actualStart = parsed.start
           end = parsed.end
           total = parsed.total
         } catch (error) {
           // Content-Range 解析失败，使用 content-length 推算
           // 这可能发生在服务器返回无效的 content-range 格式时
         }
+
+        // 验证服务器返回的范围是否与请求匹配
+        if (actualStart !== start) {
+          if (actualStart > start) {
+            // 服务器跳过了部分数据，这是严重错误
+            throw new Error(`Range mismatch: requested start=${start}, but server returned start=${actualStart} (gap detected)`)
+          } else {
+            // actualStart < start: 服务器返回了重叠数据，需要跳过前面的字节
+            const skipBytes = start - actualStart
+            let skipped = 0
+            const skipTransform = new Transform({
+              transform (chunk, _encoding, callback) {
+                if (skipped < skipBytes) {
+                  const remaining = skipBytes - skipped
+                  if (chunk.length <= remaining) {
+                    // 整个 chunk 都需要跳过
+                    skipped += chunk.length
+                    callback()
+                    return
+                  } else {
+                    // 跳过部分 chunk
+                    skipped = skipBytes
+                    callback(null, chunk.subarray(remaining))
+                    return
+                  }
+                }
+                // 已经跳过足够的字节，直接传递
+                callback(null, chunk)
+              },
+            })
+            await pipeline(res, skipTransform, writeStream, { end: false, signal })
+            // 更新进度时使用我们请求的范围，而不是服务器返回的范围
+            downSize += end - actualStart + 1 - skipBytes
+            start = downSize
+            retries = 3 // 成功后重置重试次数
+            continue
+          }
+        }
+
         if (total > 0 && total !== fileSize) {
           // 某些云服务商（如腾讯云）在 head 方法中返回的 size 是原图大小，但下载时返回的是压缩后的图片，会比原图小。
           // 这种在首次下载时虽然请求了原图大小的范围，可能比缩略图大，但会一次性返回完整的原图，而不是报错 416，通过修正 fileSize 跳出循环即可。
