@@ -74,7 +74,6 @@ export async function httpHeadHeader (url: string, headers: http.OutgoingHttpHea
       return res.headers
     }
 
-
     if (!res.headers.location) {
       throw new Error('302 found but no location!')
     }
