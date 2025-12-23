@@ -13,10 +13,7 @@ import { Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import { URL } from 'url'
 
-import {
-  HTTP_REQUEST_TIMEOUT,
-  HTTP_RESPONSE_TIMEOUT,
-} from './config.js'
+import { CONFIG } from './config.js'
 
 const protocolMap: {
   [key: string]: { agent: http.Agent; request: typeof http.request }
@@ -154,10 +151,10 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
       req.off('error', noop)
     })
     // request timeout：只用于“拿到 response 之前”（连接/握手/首包）
-    .setTimeout(HTTP_REQUEST_TIMEOUT, () => {
+    .setTimeout(CONFIG.HTTP_REQUEST_TIMEOUT, () => {
       // 已经拿到 response 时，不要再用 request timeout 误伤（会导致 aborted/ECONNRESET）
       if (res) return
-      abortController.abort(new Error(`FileBox: Http request timeout (${HTTP_REQUEST_TIMEOUT})!`))
+      abortController.abort(new Error(`FileBox: Http request timeout (${CONFIG.HTTP_REQUEST_TIMEOUT})!`))
     })
     .end()
 
@@ -198,8 +195,8 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
       signal.removeEventListener('abort', onAbort)
       res!.off('error', noop)
     })
-    .setTimeout(HTTP_RESPONSE_TIMEOUT, () => {
-      abortController.abort(new Error(`FileBox: Http response timeout (${HTTP_RESPONSE_TIMEOUT})!`))
+    .setTimeout(CONFIG.HTTP_RESPONSE_TIMEOUT, () => {
+      abortController.abort(new Error(`FileBox: Http response timeout (${CONFIG.HTTP_RESPONSE_TIMEOUT})!`))
     })
   return res!
 }
