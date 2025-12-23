@@ -112,10 +112,7 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   // 运行时读取 env：方便测试/调用方动态调整
   const noSliceDown = process.env['FILEBOX_NO_SLICE_DOWN'] === 'true'
 
-  // 检查服务器是否支持 range 请求
-  const supportsRange = headHeaders['accept-ranges'] === 'bytes'
-
-  if (!unsupportedRangeDomains.has(hostname) && !noSliceDown && supportsRange && fileSize > 0) {
+  if (!unsupportedRangeDomains.has(hostname) && !noSliceDown) {
     return await downloadFileInChunks(url, options, proxyUrl)
   } else {
     return await fetch(url, options, proxyUrl)
