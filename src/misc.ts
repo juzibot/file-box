@@ -116,7 +116,7 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   const supportsRange = headHeaders['accept-ranges'] === 'bytes'
 
   if (!unsupportedRangeDomains.has(hostname) && !noSliceDown && supportsRange && fileSize > 0) {
-    return await downloadFileInChunks(url, options, fileSize, proxyUrl)
+    return await downloadFileInChunks(url, options, proxyUrl)
   } else {
     return await fetch(url, options, proxyUrl)
   }
@@ -202,10 +202,33 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
   return res!
 }
 
+function createSkipTransform (skipBytes: number): Transform {
+  let skipped = 0
+  return new Transform({
+    transform (chunk, _encoding, callback) {
+      if (skipped < skipBytes) {
+        const remaining = skipBytes - skipped
+        if (chunk.length <= remaining) {
+          // 整个 chunk 都需要跳过
+          skipped += chunk.length
+          callback()
+          return
+        } else {
+          // 跳过部分 chunk
+          skipped = skipBytes
+          callback(null, chunk.subarray(remaining))
+          return
+        }
+      }
+      // 已经跳过足够的字节，直接传递
+      callback(null, chunk)
+    },
+  })
+}
+
 async function downloadFileInChunks (
   url: string,
   options: http.RequestOptions,
-  fileSize: number,
   proxyUrl?: string,
 ): Promise<Readable> {
   const tmpFile = join(tmpdir(), `filebox-${randomUUID()}`)
@@ -221,6 +244,8 @@ async function downloadFileInChunks (
     headers: {},
     ...options,
   }
+  // 预期文件大小（初始为 null，从首次 206 响应中获取）
+  let expectedTotal: number | null = null
   let start = 0
   let downSize = 0
   let retries = 3
@@ -271,14 +296,26 @@ async function downloadFileInChunks (
         let end = start + contentLength - 1
         let total = 0
         let actualStart = start // 服务器实际返回的起始位置
+        const contentRange = res.headers['content-range'] ?? ''
         try {
-          const parsed = parseContentRange(res.headers['content-range'] ?? '')
+          const parsed = parseContentRange(contentRange)
           actualStart = parsed.start
           end = parsed.end
           total = parsed.total
         } catch (error) {
           // Content-Range 解析失败，使用 content-length 推算
           // 这可能发生在服务器返回无效的 content-range 格式时
+          // fallback: 使用当前位置 + content-length 估算
+        }
+
+        if (expectedTotal === null) {
+          // 首次获得文件总大小
+          // 某些云服务商（如腾讯云）在 head 方法中返回的 size 是原图大小，但下载时返回的是压缩后的图片，会比原图小。
+          // 这种在首次下载时虽然请求了原图大小的范围，可能比缩略图大，但会一次性返回完整的原图，而不是报错 416，通过修正 expectedTotal 跳出循环即可。
+          expectedTotal = total > 0 ? total : (start + contentLength)
+        } else if (total > 0 && total !== expectedTotal) {
+          // 服务器返回的文件总大小出现了变化
+          throw new Error(`File size mismatch: expected ${expectedTotal}, but server returned ${total}`)
         }
 
         // 验证服务器返回的范围是否与请求匹配
@@ -289,27 +326,7 @@ async function downloadFileInChunks (
           } else {
             // actualStart < start: 服务器返回了重叠数据，需要跳过前面的字节
             const skipBytes = start - actualStart
-            let skipped = 0
-            const skipTransform = new Transform({
-              transform (chunk, _encoding, callback) {
-                if (skipped < skipBytes) {
-                  const remaining = skipBytes - skipped
-                  if (chunk.length <= remaining) {
-                    // 整个 chunk 都需要跳过
-                    skipped += chunk.length
-                    callback()
-                    return
-                  } else {
-                    // 跳过部分 chunk
-                    skipped = skipBytes
-                    callback(null, chunk.subarray(remaining))
-                    return
-                  }
-                }
-                // 已经跳过足够的字节，直接传递
-                callback(null, chunk)
-              },
-            })
+            const skipTransform = createSkipTransform(skipBytes)
             await pipeline(res, skipTransform, writeStream, { end: false, signal })
             // 更新进度时使用我们请求的范围，而不是服务器返回的范围
             downSize += end - actualStart + 1 - skipBytes
@@ -317,12 +334,6 @@ async function downloadFileInChunks (
             retries = 3 // 成功后重置重试次数
             continue
           }
-        }
-
-        if (total > 0 && total !== fileSize) {
-          // 某些云服务商（如腾讯云）在 head 方法中返回的 size 是原图大小，但下载时返回的是压缩后的图片，会比原图小。
-          // 这种在首次下载时虽然请求了原图大小的范围，可能比缩略图大，但会一次性返回完整的原图，而不是报错 416，通过修正 fileSize 跳出循环即可。
-          fileSize = total
         }
         // 使用 pipeline，但不关闭 writeStream（继续下载下一个分片）
         await pipeline(res, writeStream, { end: false, signal })
@@ -362,7 +373,7 @@ async function downloadFileInChunks (
       // 确保请求被清理（成功时也需要 abort 以释放资源）
       requestAbortController.abort()
     }
-  } while (downSize < fileSize)
+  } while (expectedTotal === null || downSize < expectedTotal)
 
   writeStream.end()
   try {
