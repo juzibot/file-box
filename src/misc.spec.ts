@@ -13,6 +13,9 @@ import {
   streamToBuffer,
 } from './misc.js'
 
+// 禁用分片下载以避免测试服务器不规范导致的超时
+process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
+
 test('dataUrl to base64', async t => {
   const base64 = [
     'R0lGODlhEAAQAMQAAORHHOVSKudfOulrSOp3WOyDZu6QdvCchPGolfO0o/XBs/fNwfjZ0frl',

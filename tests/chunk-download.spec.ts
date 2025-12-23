@@ -7,6 +7,9 @@ import { test } from 'tstest'
 
 import { httpStream, streamToBuffer } from '../src/misc.js'
 
+// chunk-download 测试专门测试分片功能，删除可能存在的禁用标志
+delete process.env['FILEBOX_NO_SLICE_DOWN']
+
 test('should download file in chunks with range support', async (t) => {
   const FILE_SIZE = 1024 * 1024 // 1MB
   const fileContent = Buffer.alloc(FILE_SIZE, 'X')

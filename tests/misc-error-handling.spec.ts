@@ -8,6 +8,9 @@ import { test } from 'tstest'
 import { httpStream, streamToBuffer } from '../src/misc.js'
 import { FileBox } from '../src/mod.js'
 
+// 禁用分片下载以避免测试服务器不规范导致的超时
+process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
+
 test('should handle connection abort gracefully', async (t) => {
   const server = createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' })
