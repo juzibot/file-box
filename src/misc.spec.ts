@@ -5,6 +5,7 @@ import { createServer } from 'http'
 import type { AddressInfo } from 'net'
 import { test } from 'tstest'
 
+import { CONFIG } from './config.js'
 import {
   dataUrlToBase64,
   httpHeaderToFileName,
@@ -12,6 +13,10 @@ import {
   httpStream,
   streamToBuffer,
 } from './misc.js'
+
+// 设置短超时用于测试
+CONFIG.HTTP_REQUEST_TIMEOUT = 1000
+CONFIG.HTTP_RESPONSE_TIMEOUT = 1000
 
 test('dataUrl to base64', async t => {
   const base64 = [
@@ -97,6 +102,8 @@ test('httpStream', async t => {
       return
     }
 
+    // This server doesn't support Range, always return 200 with full content
+    // (ignoring any Range header)
     res.writeHead(200, {
       'Content-Length': String(content.length),
       'Content-Type': 'application/json',

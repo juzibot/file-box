@@ -25,7 +25,7 @@ import {
 }                         from 'clone-class'
 
 import {
-  READY_RETRY,
+  CONFIG,
   VERSION,
 }                         from './config.js'
 import {
@@ -637,7 +637,7 @@ class FileBox implements Pipeable, FileBoxInterface {
         break
       } catch (e) {
         tryCount++
-        if (tryCount >= READY_RETRY) {
+        if (tryCount >= CONFIG.READY_RETRY) {
           throw e
         }
       }

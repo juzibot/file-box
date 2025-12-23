@@ -18,11 +18,11 @@ test('should handle connection abort gracefully', async (t) => {
     }, 100)
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
+
+  const port = (server.address() as AddressInfo).port
 
   const url = `http://127.0.0.1:${port}/test`
 
@@ -52,11 +52,11 @@ test('should handle timeout correctly', async (t) => {
       .catch(() => {})
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
+
+  const port = (server.address() as AddressInfo).port
 
   const url = `http://127.0.0.1:${port}/slow`
 
@@ -102,11 +102,11 @@ test('should handle successful large file download', async (t) => {
     }, 10)
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
+
+  const port = (server.address() as AddressInfo).port
 
   const url = `http://127.0.0.1:${port}/largefile`
 
@@ -149,24 +149,32 @@ test('should handle HTTP errors correctly', async (t) => {
     }
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
 
-  try {
-    // Test 404
-    const url404 = `http://127.0.0.1:${port}/404`
-    const stream404 = await httpStream(url404)
-    const buffer404 = await streamToBuffer(stream404)
-    t.ok(buffer404.length > 0, 'should handle 404 response')
+  const port = (server.address() as AddressInfo).port
 
-    // Test 500
+  try {
+    // Test 404 - should throw error
+    const url404 = `http://127.0.0.1:${port}/404`
+    try {
+      await httpStream(url404)
+      t.fail('should have thrown error for 404')
+    } catch (error) {
+      const err = error as Error
+      t.ok(err.message.includes('404'), `should throw error for 404: ${err.message}`)
+    }
+
+    // Test 500 - should throw error
     const url500 = `http://127.0.0.1:${port}/500`
-    const stream500 = await httpStream(url500)
-    const buffer500 = await streamToBuffer(stream500)
-    t.ok(buffer500.length > 0, 'should handle 500 response')
+    try {
+      await httpStream(url500)
+      t.fail('should have thrown error for 500')
+    } catch (error) {
+      const err = error as Error
+      t.ok(err.message.includes('500'), `should throw error for 500: ${err.message}`)
+    }
   } finally {
     server.close()
   }
@@ -202,11 +210,11 @@ test('should clear timeout after successful request', async (t) => {
     res.end(content)
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
+
+  const port = (server.address() as AddressInfo).port
 
   const url = `http://127.0.0.1:${port}/test`
 
@@ -265,11 +273,11 @@ test('should handle redirects correctly', async (t) => {
     }
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
+
+  const port = (server.address() as AddressInfo).port
 
   const url = `http://127.0.0.1:${port}/redirect`
 
@@ -313,11 +321,11 @@ test('should handle multiple concurrent requests', async (t) => {
     res.end(content)
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
+
+  const port = (server.address() as AddressInfo).port
 
   try {
     const promises = Array.from({ length: 10 }, async (_, i) => {
@@ -359,11 +367,11 @@ test('should handle early stream destruction', async (t) => {
     })
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
+
+  const port = (server.address() as AddressInfo).port
 
   const url = `http://127.0.0.1:${port}/test`
 
@@ -389,11 +397,11 @@ test('should handle empty response', async (t) => {
     res.end()
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
+
+  const port = (server.address() as AddressInfo).port
 
   const url = `http://127.0.0.1:${port}/empty`
 

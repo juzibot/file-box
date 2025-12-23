@@ -480,8 +480,10 @@ Environment variables can be used to control some behavior.
 
 - `FILEBOX_HTTP_REQUEST_TIMEOUT` [default=10000] The timeout period for establishing a communication request with the server. For example, if the network is unavailable or the delay is too high, communication cannot be successfully established.
 - `FILEBOX_HTTP_RESPONSE_TIMEOUT` [default=60000] Socket idle timeout when FileBox downloads data from URL. For example, when the network is temporarily interrupted, the request will be considered as failed after waiting for a specified time.
+- `FILEBOX_READY_RETRY` [default=3] Maximum retry count when calling `ready()` method. If an error occurs while preparing the FileBox (e.g., fetching remote file metadata), it will retry up to this number of times before throwing an error.
 - ~~`FILEBOX_HTTP_TIMEOUT` [default=60000]~~ **Deprecated!** Please use `FILEBOX_HTTP_RESPONSE_TIMEOUT`.
-- `FILEBOX_NO_SLICE_DOWN` [default=false] Whether to turn off slice downloading. If the network is unstable, an error while downloading the file will cause the file download to fail. If it is not closed, the file will be divided into multiple fragments for downloading, and breakpoint re-downloading is supported.
+- ~~`FILE_BOX_READY_RETRY` [default=3]~~ **Deprecated!** Please use `FILEBOX_READY_RETRY` (with underscore naming for consistency).
+- ~~`FILEBOX_NO_SLICE_DOWN` [default=false]~~ **Removed!** Chunked download now automatically falls back to non-chunked mode when servers don't support range requests. No manual configuration needed.
 - ~~`FILEBOX_HTTP_CHUNK_SIZE` [default=524288]~~ **Deprecated!** Chunk size is no longer configurable. The implementation now uses open-ended range requests (`bytes=start-`) for automatic chunk management.
 
 ## SCHEMAS

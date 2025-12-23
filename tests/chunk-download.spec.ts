@@ -51,12 +51,11 @@ test('should download file in chunks with range support', async (t) => {
     }
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
 
+  const port = (server.address() as AddressInfo).port
   const url = `http://127.0.0.1:${port}/largefile`
 
   try {
@@ -123,12 +122,11 @@ test('should handle chunk download with retry on failure', async (t) => {
     }
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
 
+  const port = (server.address() as AddressInfo).port
   const url = `http://127.0.0.1:${port}/retry-file`
 
   try {
@@ -167,12 +165,11 @@ test('should handle server without range support', async (t) => {
     res.end(fileContent)
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
 
+  const port = (server.address() as AddressInfo).port
   const url = `http://127.0.0.1:${port}/no-range-file`
 
   try {
@@ -236,12 +233,11 @@ test('should handle partial content with interrupted download', async (t) => {
     }
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
 
+  const port = (server.address() as AddressInfo).port
   const url = `http://127.0.0.1:${port}/interrupted-file`
 
   try {
@@ -296,12 +292,11 @@ test('should handle Content-Range parsing errors gracefully', async (t) => {
     }
   })
 
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
   await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
+    server.listen(0, '127.0.0.1', () => resolve())
   })
 
+  const port = (server.address() as AddressInfo).port
   const url = `http://127.0.0.1:${port}/invalid-range-file`
 
   try {
@@ -315,58 +310,5 @@ test('should handle Content-Range parsing errors gracefully', async (t) => {
   }
 })
 
-test('should disable chunk download with NO_SLICE_DOWN env', async (t) => {
-  const FILE_SIZE = 900 * 1024
-  const fileContent = Buffer.alloc(FILE_SIZE, 'N')
-  let rangeRequested = false
-
-  const server = createServer((req, res) => {
-    // Handle HEAD requests
-    if (req.method === 'HEAD') {
-      res.writeHead(200, {
-        'Accept-Ranges': 'bytes',
-        'Content-Length': FILE_SIZE,
-      })
-      res.end()
-      return
-    }
-
-    if (req.headers.range) {
-      rangeRequested = true
-    }
-
-    res.writeHead(200, {
-      'Accept-Ranges': 'bytes',
-      'Content-Length': FILE_SIZE,
-    })
-    res.end(fileContent)
-  })
-
-  const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
-  await new Promise<void>((resolve) => {
-    server.listen(port, '127.0.0.1', () => resolve())
-  })
-
-  const url = `http://127.0.0.1:${port}/no-slice-file`
-
-  try {
-    const originalNoSlice = process.env['FILEBOX_NO_SLICE_DOWN']
-
-    process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
-
-    const stream = await httpStream(url)
-    const buffer = await streamToBuffer(stream)
-
-    t.equal(buffer.length, FILE_SIZE, 'should download complete file')
-    t.notOk(rangeRequested, 'should not use range requests when disabled')
-
-    if (originalNoSlice) {
-      process.env['FILEBOX_NO_SLICE_DOWN'] = originalNoSlice
-    } else {
-      delete process.env['FILEBOX_NO_SLICE_DOWN']
-    }
-  } finally {
-    server.close()
-  }
-})
+// NO_SLICE_DOWN 配置已移除，现在使用自动回退机制
+// 当服务器不支持 Range 时，会自动回退到非分片下载
