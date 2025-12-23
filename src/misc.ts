@@ -280,12 +280,9 @@ async function downloadFileInChunks (
       delete (requestOptions.headers as http.OutgoingHttpHeaders)['Range']
     }
 
-    // 每次请求创建独立的 AbortController 来管理当前请求的生命周期
-    const requestAbortController = new AbortController()
-    requestOptions.signal = requestAbortController.signal
-
+    let res: http.IncomingMessage
     try {
-      const res = await fetch(url, requestOptions, proxyUrl)
+      res = await fetch(url, requestOptions, proxyUrl)
       if (res.statusCode === 416) {
         // 416: Range Not Satisfiable，服务器不支持此范围或文件大小不匹配
         throw new FallbackError('416 Range Not Satisfiable')
@@ -353,7 +350,7 @@ async function downloadFileInChunks (
         // end 是最后一个字节的索引，下次从 end+1 开始
         downSize += end - start + 1
         start = downSize
-      } else {
+      } else if (res.statusCode === 200) {
         // 200: 服务器返回完整文件，不支持 range
         if (useChunked || start > 0) {
           // 之前是分片模式，现在服务器返回完整文件，需要回退
@@ -364,12 +361,23 @@ async function downloadFileInChunks (
         await pipeline(res, writeStream, { signal })
         downSize = contentLength
         break
+      } else {
+        throw new Error(`Unexpected status code: ${res.statusCode}`)
       }
       // 成功后重置重试次数
       retries = 3
     } catch (error) {
       if (error instanceof FallbackError) {
         // 回退逻辑：记录域名、重置状态，在下次循环中以非 range 模式请求
+
+        // 检查是否已经是非 Range 模式，避免无限回退
+        if (!useRange) {
+          // 已经是非 Range 模式还失败，无法继续
+          writeStream.destroy()
+          await rm(tmpFile, { force: true })
+          throw new Error(`Download failed even in non-chunked mode: ${(error as Error).message}`)
+        }
+
         unsupportedRangeDomains.add(hostname)
 
         // 关闭当前写入流
@@ -402,9 +410,6 @@ async function downloadFileInChunks (
       }
       // 失败后等待一小段时间再重试
       await new Promise(resolve => setTimeout(resolve, 100))
-    } finally {
-      // 确保请求被清理（成功时也需要 abort 以释放资源）
-      requestAbortController.abort()
     }
   } while (expectedTotal === null || downSize < expectedTotal)
 

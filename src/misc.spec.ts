@@ -5,6 +5,7 @@ import { createServer } from 'http'
 import type { AddressInfo } from 'net'
 import { test } from 'tstest'
 
+import { CONFIG } from './config.js'
 import {
   dataUrlToBase64,
   httpHeaderToFileName,
@@ -12,7 +13,6 @@ import {
   httpStream,
   streamToBuffer,
 } from './misc.js'
-import { CONFIG } from './config.js'
 
 // 设置短超时用于测试
 CONFIG.HTTP_REQUEST_TIMEOUT = 1000
