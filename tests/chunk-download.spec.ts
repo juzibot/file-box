@@ -12,6 +12,17 @@ test('should download file in chunks with range support', async (t) => {
   const fileContent = Buffer.alloc(FILE_SIZE, 'X')
 
   const server = createServer((req, res) => {
+    // Handle HEAD requests
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': FILE_SIZE,
+        'Content-Type': 'application/octet-stream',
+      })
+      res.end()
+      return
+    }
+
     const rangeHeader = req.headers.range
 
     if (rangeHeader) {
@@ -49,22 +60,11 @@ test('should download file in chunks with range support', async (t) => {
   const url = `http://127.0.0.1:${port}/largefile`
 
   try {
-    // Set environment to enable chunk download
-    const originalChunkSize = process.env['FILEBOX_HTTP_CHUNK_SIZE']
-    process.env['FILEBOX_HTTP_CHUNK_SIZE'] = String(512 * 1024) // 512KB chunks
-
     const stream = await httpStream(url)
     const buffer = await streamToBuffer(stream)
 
     t.equal(buffer.length, FILE_SIZE, 'should download complete file')
     t.ok(buffer.every(byte => byte === 88), 'should have correct content (all X)')
-
-    // Restore environment
-    if (originalChunkSize) {
-      process.env['FILEBOX_HTTP_CHUNK_SIZE'] = originalChunkSize
-    } else {
-      delete process.env['FILEBOX_HTTP_CHUNK_SIZE']
-    }
   } finally {
     server.close()
   }
@@ -78,6 +78,18 @@ test('should handle chunk download with retry on failure', async (t) => {
 
   const server = createServer((req, res) => {
     requestCount++
+
+    // Handle HEAD requests
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': FILE_SIZE,
+        'Content-Type': 'application/octet-stream',
+      })
+      res.end()
+      return
+    }
+
     const rangeHeader = req.headers.range
 
     // Fail the first chunk request to test retry
@@ -120,21 +132,12 @@ test('should handle chunk download with retry on failure', async (t) => {
   const url = `http://127.0.0.1:${port}/retry-file`
 
   try {
-    const originalChunkSize = process.env['FILEBOX_HTTP_CHUNK_SIZE']
-    process.env['FILEBOX_HTTP_CHUNK_SIZE'] = String(300 * 1024) // 300KB chunks
-
     const stream = await httpStream(url)
     const buffer = await streamToBuffer(stream)
 
     t.equal(buffer.length, FILE_SIZE, 'should complete download despite retry')
     t.ok(buffer.every(byte => byte === 89), 'should have correct content (all Y)')
     t.ok(requestCount > 2, 'should have made retry requests')
-
-    if (originalChunkSize) {
-      process.env['FILEBOX_HTTP_CHUNK_SIZE'] = originalChunkSize
-    } else {
-      delete process.env['FILEBOX_HTTP_CHUNK_SIZE']
-    }
   } finally {
     server.close()
   }
@@ -144,7 +147,17 @@ test('should handle server without range support', async (t) => {
   const FILE_SIZE = 700 * 1024 // 700KB
   const fileContent = Buffer.alloc(FILE_SIZE, 'Z')
 
-  const server = createServer((_req, res) => {
+  const server = createServer((req, res) => {
+    // Handle HEAD requests
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Length': FILE_SIZE,
+        'Content-Type': 'application/octet-stream',
+      })
+      res.end()
+      return
+    }
+
     // Server doesn't support ranges
     res.writeHead(200, {
       'Content-Length': FILE_SIZE,
@@ -179,6 +192,17 @@ test('should handle partial content with interrupted download', async (t) => {
   let chunkRequestCount = 0
 
   const server = createServer((req, res) => {
+    // Handle HEAD requests
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': FILE_SIZE,
+        'Content-Type': 'application/octet-stream',
+      })
+      res.end()
+      return
+    }
+
     const rangeHeader = req.headers.range
 
     if (rangeHeader) {
@@ -221,20 +245,11 @@ test('should handle partial content with interrupted download', async (t) => {
   const url = `http://127.0.0.1:${port}/interrupted-file`
 
   try {
-    const originalChunkSize = process.env['FILEBOX_HTTP_CHUNK_SIZE']
-    process.env['FILEBOX_HTTP_CHUNK_SIZE'] = String(400 * 1024)
-
     const stream = await httpStream(url)
     const buffer = await streamToBuffer(stream)
 
     t.equal(buffer.length, FILE_SIZE, 'should recover from interruption')
     t.ok(chunkRequestCount >= 2, 'should have retried after interruption')
-
-    if (originalChunkSize) {
-      process.env['FILEBOX_HTTP_CHUNK_SIZE'] = originalChunkSize
-    } else {
-      delete process.env['FILEBOX_HTTP_CHUNK_SIZE']
-    }
   } finally {
     server.close()
   }
@@ -245,6 +260,17 @@ test('should handle Content-Range parsing errors gracefully', async (t) => {
   const fileContent = Buffer.alloc(FILE_SIZE, 'T')
 
   const server = createServer((req, res) => {
+    // Handle HEAD requests
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': FILE_SIZE,
+        'Content-Type': 'application/octet-stream',
+      })
+      res.end()
+      return
+    }
+
     const rangeHeader = req.headers.range
 
     if (rangeHeader) {
@@ -279,20 +305,11 @@ test('should handle Content-Range parsing errors gracefully', async (t) => {
   const url = `http://127.0.0.1:${port}/invalid-range-file`
 
   try {
-    const originalChunkSize = process.env['FILEBOX_HTTP_CHUNK_SIZE']
-    process.env['FILEBOX_HTTP_CHUNK_SIZE'] = String(50 * 1024)
-
     const stream = await httpStream(url)
     const buffer = await streamToBuffer(stream)
 
     // Should still work despite invalid Content-Range
     t.equal(buffer.length, FILE_SIZE, 'should handle invalid Content-Range')
-
-    if (originalChunkSize) {
-      process.env['FILEBOX_HTTP_CHUNK_SIZE'] = originalChunkSize
-    } else {
-      delete process.env['FILEBOX_HTTP_CHUNK_SIZE']
-    }
   } finally {
     server.close()
   }
@@ -304,6 +321,16 @@ test('should disable chunk download with NO_SLICE_DOWN env', async (t) => {
   let rangeRequested = false
 
   const server = createServer((req, res) => {
+    // Handle HEAD requests
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': FILE_SIZE,
+      })
+      res.end()
+      return
+    }
+
     if (req.headers.range) {
       rangeRequested = true
     }
@@ -325,10 +352,8 @@ test('should disable chunk download with NO_SLICE_DOWN env', async (t) => {
 
   try {
     const originalNoSlice = process.env['FILEBOX_NO_SLICE_DOWN']
-    const originalChunkSize = process.env['FILEBOX_HTTP_CHUNK_SIZE']
 
     process.env['FILEBOX_NO_SLICE_DOWN'] = 'true'
-    process.env['FILEBOX_HTTP_CHUNK_SIZE'] = String(300 * 1024)
 
     const stream = await httpStream(url)
     const buffer = await streamToBuffer(stream)
@@ -340,12 +365,6 @@ test('should disable chunk download with NO_SLICE_DOWN env', async (t) => {
       process.env['FILEBOX_NO_SLICE_DOWN'] = originalNoSlice
     } else {
       delete process.env['FILEBOX_NO_SLICE_DOWN']
-    }
-
-    if (originalChunkSize) {
-      process.env['FILEBOX_HTTP_CHUNK_SIZE'] = originalChunkSize
-    } else {
-      delete process.env['FILEBOX_HTTP_CHUNK_SIZE']
     }
   } finally {
     server.close()

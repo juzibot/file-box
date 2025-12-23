@@ -85,8 +85,23 @@ test('httpHeaderToFileName', async t => {
 
 test('httpStream', async t => {
   const server = createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ headers: req.headers }))
+    const content = JSON.stringify({ headers: req.headers })
+
+    // Handle HEAD requests
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Length': String(content.length),
+        'Content-Type': 'application/json',
+      })
+      res.end()
+      return
+    }
+
+    res.writeHead(200, {
+      'Content-Length': String(content.length),
+      'Content-Type': 'application/json',
+    })
+    res.end(content)
   })
 
   const host = await new Promise<string>((resolve) => {
@@ -128,14 +143,14 @@ test('httpStream in chunks', async (t) => {
 
     const range = req.headers.range
     if (range) {
-      const m = String(range).match(/bytes=(\d+)-(\d+)/)
+      const m = String(range).match(/bytes=(\d+)-(\d*)/)
       if (!m) {
         res.writeHead(416)
         res.end()
         return
       }
       const start = Number(m[1])
-      const end = Number(m[2])
+      const end = m[2] ? Number(m[2]) : FILE_SIZE - 1
       const chunk = content.subarray(start, end + 1)
       res.writeHead(206, {
         'Accept-Ranges': 'bytes',
@@ -161,14 +176,7 @@ test('httpStream in chunks', async (t) => {
   })
   t.teardown(() => { server.close() })
 
-  const originalChunkSize = process.env['FILEBOX_HTTP_CHUNK_SIZE']
-  process.env['FILEBOX_HTTP_CHUNK_SIZE'] = String(256 * 1024)
-  try {
-    const res = await httpStream(`${host}/file`)
-    const buffer = await streamToBuffer(res)
-    t.equal(buffer.length, FILE_SIZE, 'should get data in chunks right')
-  } finally {
-    if (originalChunkSize) process.env['FILEBOX_HTTP_CHUNK_SIZE'] = originalChunkSize
-    else delete process.env['FILEBOX_HTTP_CHUNK_SIZE']
-  }
+  const res = await httpStream(`${host}/file`)
+  const buffer = await streamToBuffer(res)
+  t.equal(buffer.length, FILE_SIZE, 'should get data in chunks right')
 })
