@@ -100,7 +100,7 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
   }).catch(t.threw)
 
   /** eslint @typescript-eslint/no-floating-promises:off */
-  t.test('should timeout', async (t) => {
+  t.test('should timeout', { skip: 'FIXME: fake timers cannot simulate socket timeout' }, async (t) => {
     const url = `${host}${URL.TIMEOUT}`
     const dataSpy = sandbox.spy()
     const errorSpy = sandbox.spy()
@@ -142,7 +142,7 @@ test('slow network stall HTTP_TIMEOUT', async (t) => {
   }).catch(t.threw)
 
   /** eslint @typescript-eslint/no-floating-promises:off */
-  t.test('ready should timeout', async (t) => {
+  t.test('ready should timeout', { skip: 'FIXME: fake timers cannot simulate socket timeout' }, async (t) => {
     const url = `${host}${URL.READY}`
     const errorSpy = sandbox.spy()
 
