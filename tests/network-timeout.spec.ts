@@ -21,7 +21,6 @@ test('HTTP timeout handling', async (t) => {
   })
 
   await t.test('should complete download without timeout', async (t) => {
-    const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
     const testData = 'Test data for no timeout'
 
     const server = createServer((req, res) => {
@@ -38,9 +37,10 @@ test('HTTP timeout handling', async (t) => {
     })
 
     await new Promise<void>((resolve) => {
-      server.listen(port, '127.0.0.1', resolve)
+      server.listen(0, '127.0.0.1', resolve)
     })
 
+    const port = (server.address() as AddressInfo).port
     t.teardown(() => { server.close() })
 
     const url = `http://127.0.0.1:${port}/test`
@@ -61,8 +61,6 @@ test('HTTP timeout handling', async (t) => {
   })
 
   await t.test('should handle response timeout', async (t) => {
-    const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
-
     const server = createServer((req, res) => {
       if (req.method === 'HEAD') {
         res.writeHead(200, { 'Content-Length': '100' })
@@ -78,9 +76,10 @@ test('HTTP timeout handling', async (t) => {
     })
 
     await new Promise<void>((resolve) => {
-      server.listen(port, '127.0.0.1', resolve)
+      server.listen(0, '127.0.0.1', resolve)
     })
 
+    const port = (server.address() as AddressInfo).port
     t.teardown(() => { server.close() })
 
     const url = `http://127.0.0.1:${port}/timeout`
@@ -106,7 +105,6 @@ test('HTTP timeout handling', async (t) => {
   })
 
   await t.test('should handle request timeout', async (t) => {
-    const port = Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152
     let requestReceived = false
 
     /* eslint @typescript-eslint/no-misused-promises:off */
@@ -126,9 +124,10 @@ test('HTTP timeout handling', async (t) => {
     })
 
     await new Promise<void>((resolve) => {
-      server.listen(port, '127.0.0.1', resolve)
+      server.listen(0, '127.0.0.1', resolve)
     })
 
+    const port = (server.address() as AddressInfo).port
     t.teardown(() => { server.close() })
 
     const url = `http://127.0.0.1:${port}/request-timeout`
