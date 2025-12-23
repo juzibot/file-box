@@ -279,7 +279,7 @@ async function downloadFileInChunks (
       delete headers['Range']
     }
 
-    let res: http.IncomingMessage
+    let res: http.IncomingMessage | undefined
     try {
       res = await fetch(url, requestOptions, proxyUrl)
       if (res.statusCode === 416) {
@@ -408,6 +408,11 @@ async function downloadFileInChunks (
       }
       // 失败后等待一小段时间再重试
       await setTimeout(100)
+    } finally {
+      // 显式销毁响应流，释放底层 socket 资源
+      // pipeline 成功时会自动关闭流，但失败时（如 FallbackError）可能保持打开状态
+      // 使用可选链避免 res 未定义（fetch 失败时）
+      res?.destroy()
     }
   } while (expectedTotal === null || downSize < expectedTotal)
 
