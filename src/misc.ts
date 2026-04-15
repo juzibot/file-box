@@ -61,10 +61,7 @@ export async function httpHeadHeader (url: string, headers: http.OutgoingHttpHea
       throw new Error(`ttl expired! too many(>${REDIRECT_TTL}) 302 redirection.`)
     }
 
-    const res = await fetch(url, {
-      headers,
-      method: 'HEAD',
-    }, proxyUrl)
+    const res = await fetchHead(url, headers, proxyUrl)
     res.destroy()
 
     if (!/^3/.test(String(res.statusCode))) {
@@ -203,6 +200,68 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
       abortController.abort(new Error(`FileBox: Http response timeout (${CONFIG.HTTP_RESPONSE_TIMEOUT})!`))
     })
   return res!
+}
+
+async function fetchHead (url: string, headers: http.OutgoingHttpHeaders = {}, proxyUrl?: string): Promise<http.IncomingMessage> {
+  try {
+    return await fetch(url, {
+      headers,
+      method: 'HEAD',
+    }, proxyUrl)
+  } catch (error) {
+    if (!shouldFallbackHeadToRangeGet(error)) {
+      throw error
+    }
+
+    try {
+      return await fetchRangeHeader(url, headers, proxyUrl)
+    } catch {
+      throw error
+    }
+  }
+}
+
+function shouldFallbackHeadToRangeGet (error: unknown): boolean {
+  const code = typeof error === 'object' && error && 'code' in error
+    ? String((error as NodeJS.ErrnoException).code)
+    : ''
+  const message = error instanceof Error ? error.message : String(error)
+
+  return code.startsWith('HPE_') || message.includes('Parse Error')
+}
+
+async function fetchRangeHeader (url: string, headers: http.OutgoingHttpHeaders = {}, proxyUrl?: string): Promise<http.IncomingMessage> {
+  const res = await fetch(url, {
+    headers: createRangeProbeHeaders(headers),
+    method: 'GET',
+  }, proxyUrl)
+  normalizeRangeProbeHeaders(res.headers)
+  return res
+}
+
+function createRangeProbeHeaders (headers: http.OutgoingHttpHeaders): http.OutgoingHttpHeaders {
+  const rangeHeaders: http.OutgoingHttpHeaders = {}
+
+  for (const [ key, value ] of Object.entries(headers)) {
+    if (key.toLowerCase() === 'range') {
+      continue
+    }
+    rangeHeaders[key] = value
+  }
+
+  rangeHeaders['Range'] = 'bytes=0-0'
+  return rangeHeaders
+}
+
+function normalizeRangeProbeHeaders (headers: http.IncomingHttpHeaders): void {
+  const contentRange = Array.isArray(headers['content-range'])
+    ? headers['content-range'][0]
+    : headers['content-range']
+  const matches = contentRange?.match(/bytes \d+-\d+\/(\d+)/)
+
+  if (matches?.[1]) {
+    headers['content-length'] = matches[1]
+  }
 }
 
 function createSkipTransform (skipBytes: number): Transform {
