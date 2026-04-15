@@ -14,7 +14,7 @@ cd $TMPDIR
 npm init -y
 npm install ./*-*.*.*.tgz \
   @types/node \
-  typescript \
+  typescript@4.7.4 \
 
 #
 # CommonJS
