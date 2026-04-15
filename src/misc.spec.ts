@@ -18,6 +18,8 @@ import {
 CONFIG.HTTP_REQUEST_TIMEOUT = 1000
 CONFIG.HTTP_RESPONSE_TIMEOUT = 1000
 
+const TC_QQ_DOWNLOAD_URL = 'http://wxapp.tc.qq.com/270/20304/stodownload?m=775ba582fe1d27e158806a4c10230a45&filekey=30350201010421301f0202010e040253480410775ba582fe1d27e158806a4c10230a450203017a31040d00000004627466730000000132&hy=SH&storeid=2685965c90008afdf000000000000010e00004f50534801c33031571b54757&bizid=1023'
+
 test('dataUrl to base64', async t => {
   const base64 = [
     'R0lGODlhEAAQAMQAAORHHOVSKudfOulrSOp3WOyDZu6QdvCchPGolfO0o/XBs/fNwfjZ0frl',
@@ -70,6 +72,17 @@ test('httpHeadHeader', async t => {
     'attachment; filename=file-box-0.6.tar.gz',
     'should get the headers right',
   )
+})
+
+test('httpHeadHeader with tc qq download url', async t => {
+  const requestTimeout = CONFIG.HTTP_REQUEST_TIMEOUT
+  CONFIG.HTTP_REQUEST_TIMEOUT = 10000
+  t.teardown(() => { CONFIG.HTTP_REQUEST_TIMEOUT = requestTimeout })
+
+  const headers = await httpHeadHeader(TC_QQ_DOWNLOAD_URL)
+  t.equal(headers['accept-ranges'], 'bytes', 'should support byte range')
+  t.equal(headers['content-type'], 'image/jpg', 'should get content type')
+  t.ok(Number(headers['content-length']) > 0, 'should get content length')
 })
 
 test('httpHeaderToFileName', async t => {
