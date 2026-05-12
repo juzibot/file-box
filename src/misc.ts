@@ -314,6 +314,7 @@ async function downloadFileInChunks (
   let retries = 3
   // 控制是否使用 Range 请求（根据域名黑名单初始化）
   let useRange = !unsupportedRangeDomains.has(hostname)
+    && !CONFIG.UNSUPPORTED_RANGE_DOMAINS.has(hostname)
   let useChunked = false
 
   do {
