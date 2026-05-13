@@ -12,6 +12,8 @@ import {
   httpHeadHeader,
   httpStream,
   streamToBuffer,
+  __clearUnsupportedRangeDomains,
+  __addUnsupportedRangeDomain,
 } from './misc.js'
 
 // 设置短超时用于测试
@@ -186,4 +188,42 @@ test('httpStream in chunks', async (t) => {
   const res = await httpStream(`${host}/file`)
   const buffer = await streamToBuffer(res)
   t.equal(buffer.length, FILE_SIZE, 'should get data in chunks right')
+})
+
+test('httpStream: HEAD Accept-Ranges=none 时不发 Range 请求(A2)', async (t) => {
+  __clearUnsupportedRangeDomains()
+
+  const TRUE_DATA = Buffer.from('TRUE-DATA-A2', 'utf8')
+  let getCallCount = 0
+  let getHadRangeHeader: boolean | undefined
+
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Accept-Ranges': 'none',
+        'Content-Length': String(TRUE_DATA.length),
+      })
+      res.end()
+      return
+    }
+    getCallCount += 1
+    getHadRangeHeader = 'range' in req.headers
+    res.writeHead(200, { 'Content-Length': String(TRUE_DATA.length) })
+    res.end(TRUE_DATA)
+  })
+
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
+
+  const stream = await httpStream(`${host}/file`)
+  const buffer = await streamToBuffer(stream)
+
+  t.equal(getCallCount, 1, 'GET 应只被调用 1 次')
+  t.equal(getHadRangeHeader, false, 'GET 请求不应携带 Range header')
+  t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '应拿到真实数据')
 })
