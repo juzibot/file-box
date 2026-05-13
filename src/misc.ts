@@ -252,7 +252,7 @@ async function downloadFileInChunks (
   url: string,
   options: http.RequestOptions,
   proxyUrl: string | undefined,
-  hostname: string,
+  hostKey: string,
 ): Promise<Readable> {
   const tmpFile = join(tmpdir(), `filebox-${randomUUID()}`)
   let writeStream = createWriteStream(tmpFile)
@@ -273,7 +273,7 @@ async function downloadFileInChunks (
   let downSize = 0
   let retries = 3
   // 控制是否使用 Range 请求（根据域名黑名单初始化）
-  let useRange = !unsupportedRangeDomains.has(hostname)
+  let useRange = !unsupportedRangeDomains.has(hostKey)
   let useChunked = false
 
   do {
@@ -399,7 +399,7 @@ async function downloadFileInChunks (
     } catch (error) {
       if (error instanceof FallbackError) {
         // 回退逻辑：记录域名、重置状态，在下次循环中以非 range 模式请求
-        unsupportedRangeDomains.add(hostname)
+        unsupportedRangeDomains.add(hostKey)
 
         // 关闭当前写入流
         writeStream.destroy()
