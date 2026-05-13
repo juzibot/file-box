@@ -228,6 +228,51 @@ test('httpStream: HEAD Accept-Ranges=none 时不发 Range 请求(A2)', async (t)
   t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '应拿到真实数据')
 })
 
+test('httpStream: HEAD Accept-Ranges=none 端到端持久化,第二次请求直接跳过 Range(A2 持久化)', async (t) => {
+  __clearUnsupportedRangeDomains()
+
+  const TRUE_DATA = Buffer.from('E2E-A2-PERSISTENCE', 'utf8')
+  let getCallCount = 0
+  const getRangeHeaderByCall: (string | undefined)[] = []
+
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Accept-Ranges': 'none',
+        'Content-Length': String(TRUE_DATA.length),
+      })
+      res.end()
+      return
+    }
+    getCallCount += 1
+    const rangeHeader = req.headers.range
+    getRangeHeaderByCall.push(typeof rangeHeader === 'string' ? rangeHeader : undefined)
+    res.writeHead(200, { 'Content-Length': String(TRUE_DATA.length) })
+    res.end(TRUE_DATA)
+  })
+
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
+
+  // 第一次请求:HEAD 里 Accept-Ranges=none,A2 把 host 加入黑名单
+  const stream1 = await httpStream(`${host}/file`)
+  await streamToBuffer(stream1)
+
+  // 第二次请求:同 host,预期 A2 黑名单命中,GET 不带 Range
+  const stream2 = await httpStream(`${host}/file`)
+  const buffer2 = await streamToBuffer(stream2)
+
+  t.equal(getCallCount, 2, 'GET 应被调用 2 次(每次请求各 1 次,无 Range 重试)')
+  t.equal(getRangeHeaderByCall[0], undefined, '第 1 次 GET 不带 Range(本次 HEAD 已宣告 none)')
+  t.equal(getRangeHeaderByCall[1], undefined, '第 2 次 GET 不带 Range(黑名单命中)')
+  t.equal(buffer2.toString('utf8'), TRUE_DATA.toString('utf8'), '第二次应拿到真实数据')
+})
+
 test('httpStream: 带 Range 却收到 200 时回退重发不带 Range(B1 - CMSV6 场景)', async (t) => {
   __clearUnsupportedRangeDomains()
 
