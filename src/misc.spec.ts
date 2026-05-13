@@ -273,3 +273,41 @@ test('httpStream: 带 Range 却收到 200 时回退重发不带 Range(B1 - CMSV6
   t.equal(getRangeHeaderByCall[1], undefined, '第 2 次 GET 不应携带 Range header')
   t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '最终数据应为 TRUE_DATA(回退后拿到的)')
 })
+
+test('httpStream: 黑名单登记的 host 后续请求直接跳过 Range(B1 黑名单持久化)', async (t) => {
+  __clearUnsupportedRangeDomains()
+
+  const TRUE_DATA = Buffer.from('SECOND-DOWNLOAD-AFTER-BLACKLIST', 'utf8')
+  let getCallCount = 0
+  let getHadRangeHeader: boolean | undefined
+
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, { 'Content-Length': String(TRUE_DATA.length) })
+      res.end()
+      return
+    }
+    getCallCount += 1
+    getHadRangeHeader = 'range' in req.headers
+    res.writeHead(200, { 'Content-Length': String(TRUE_DATA.length) })
+    res.end(TRUE_DATA)
+  })
+
+  const port = await new Promise<number>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(addr.port)
+    })
+  })
+  t.teardown(() => { server.close() })
+
+  // 测试前手工 seed hostKey 进黑名单,模拟"此前已因 B1 加入过"
+  __addUnsupportedRangeDomain(`127.0.0.1:${port}`)
+
+  const stream = await httpStream(`http://127.0.0.1:${port}/file`)
+  const buffer = await streamToBuffer(stream)
+
+  t.equal(getCallCount, 1, '黑名单命中后 GET 只调用 1 次')
+  t.equal(getHadRangeHeader, false, '黑名单命中后 GET 不带 Range header')
+  t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '应拿到真实数据')
+})
