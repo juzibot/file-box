@@ -369,7 +369,13 @@ async function downloadFileInChunks (
         downSize += end - start + 1
         start = downSize
       } else if (res.statusCode === 200) {
-        // 200: 服务器返回完整文件
+        if (useRange) {
+          // B1：发了 Range 却收到 200 —— 服务器未实现 Range
+          // 响应体是"对带 Range 请求的回答"，不可信（见 CMSV6 场景）
+          // 交给 FallbackError 的 catch 分支统一处理：销毁流、删 tmp、加入黑名单、重发
+          throw new FallbackError('Server returned 200 for Range request')
+        }
+        // 200: 服务器返回完整文件（本次未带 Range）
         if (useChunked || start > 0) {
           // 之前以分片模式下载过数据
           writeStream.destroy()
