@@ -227,3 +227,49 @@ test('httpStream: HEAD Accept-Ranges=none 时不发 Range 请求(A2)', async (t)
   t.equal(getHadRangeHeader, false, 'GET 请求不应携带 Range header')
   t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '应拿到真实数据')
 })
+
+test('httpStream: 带 Range 却收到 200 时回退重发不带 Range(B1 - CMSV6 场景)', async (t) => {
+  __clearUnsupportedRangeDomains()
+
+  const FAKE_DATA = Buffer.from('FAKE-DATA-FROM-WRONG-STREAM', 'utf8')
+  const TRUE_DATA = Buffer.alloc(FAKE_DATA.length, 'T') // 长度相同,内容不同
+  let getCallCount = 0
+  const getRangeHeaderByCall: (string | undefined)[] = []
+
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      // 注意:不返回 Accept-Ranges,模拟 CMSV6
+      res.writeHead(200, { 'Content-Length': String(TRUE_DATA.length) })
+      res.end()
+      return
+    }
+    getCallCount += 1
+    const rangeHeader = req.headers.range
+    getRangeHeaderByCall.push(typeof rangeHeader === 'string' ? rangeHeader : undefined)
+
+    // CMSV6 行为:无论是否带 Range,都返回 200 + 正确 Content-Length
+    // 但内容随 Range 存在与否而不同
+    res.writeHead(200, { 'Content-Length': String(TRUE_DATA.length) })
+    if (rangeHeader) {
+      res.end(FAKE_DATA)
+    } else {
+      res.end(TRUE_DATA)
+    }
+  })
+
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
+
+  const stream = await httpStream(`${host}/file`)
+  const buffer = await streamToBuffer(stream)
+
+  t.equal(getCallCount, 2, 'GET 应被调用 2 次(第一次带 Range 触发 B1,第二次回退)')
+  t.ok(getRangeHeaderByCall[0], '第 1 次 GET 应携带 Range header')
+  t.equal(getRangeHeaderByCall[1], undefined, '第 2 次 GET 不应携带 Range header')
+  t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '最终数据应为 TRUE_DATA(回退后拿到的)')
+})
