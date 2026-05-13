@@ -36,6 +36,16 @@ class FallbackError extends Error {
 
 }
 
+// 仅测试用:清空运行期黑名单(模块级 Set 跨 test 会污染)
+export function __clearUnsupportedRangeDomains (): void {
+  unsupportedRangeDomains.clear()
+}
+
+// 仅测试用:手工登记一个 host 到黑名单(用于验证后续请求直接跳过 Range)
+export function __addUnsupportedRangeDomain (hostKey: string): void {
+  unsupportedRangeDomains.add(hostKey)
+}
+
 function getProtocol (protocol: string) {
   assert(protocolMap[protocol], new Error('unknown protocol: ' + protocol))
   return protocolMap[protocol]!
