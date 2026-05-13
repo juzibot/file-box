@@ -127,11 +127,20 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   const defaultPort = protocol === 'https:' ? '443' : '80'
   const hostKey = `${hostname}:${port || defaultPort}`
 
-  // 直接尝试分片下载，不检查 Accept-Ranges 和 fileSize
+  // A2：若 HEAD 明确声明 Accept-Ranges: none，记录到运行期黑名单
+  // 以便 downloadFileInChunks 本次请求就直接以非 Range 模式发起
+  // Accept-Ranges header 可能是 string | string[]，归一化后匹配 'none'
+  const acceptRangesRaw = headHeaders['accept-ranges']
+  const acceptRanges = Array.isArray(acceptRangesRaw) ? acceptRangesRaw[0] : acceptRangesRaw
+  if (typeof acceptRanges === 'string' && acceptRanges.trim().toLowerCase() === 'none') {
+    unsupportedRangeDomains.add(hostKey)
+  }
+
+  // 直接尝试分片下载，不检查 fileSize
   // 原因：
   // 1. 有些服务器 HEAD 不返回 Accept-Ranges 但实际支持分片
   // 2. 有些服务器 HEAD 返回 fileSize=0 但实际支持分片
-  // downloadFileInChunks 内部有完善的回退机制处理不支持的情况
+  // downloadFileInChunks 内部有完善的回退机制处理不支持的情况（见 B1）
   const result = await downloadFileInChunks(url, options, proxyUrl, hostKey)
   return result
 }
