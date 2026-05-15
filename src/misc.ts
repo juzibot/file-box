@@ -24,7 +24,26 @@ const protocolMap: {
 }
 
 const noop = () => { }
+
+// 运行期黑名单:记录已知不支持 Range 请求的 host(格式 `hostname:port`)
+// 用 Set 天然按插入序保序,命中上限时淘汰最早插入的条目(FIFO)
+// 上限防止长运行进程(如网关)内存无界增长
+const UNSUPPORTED_RANGE_DOMAINS_MAX = 1024
 const unsupportedRangeDomains = new Set<string>()
+
+function addUnsupportedRangeDomain (hostKey: string): void {
+  if (unsupportedRangeDomains.has(hostKey)) {
+    return
+  }
+  unsupportedRangeDomains.add(hostKey)
+  if (unsupportedRangeDomains.size > UNSUPPORTED_RANGE_DOMAINS_MAX) {
+    // Set.values() 按插入顺序迭代,删除最早一条即可
+    const oldest = unsupportedRangeDomains.values().next().value
+    if (oldest !== undefined) {
+      unsupportedRangeDomains.delete(oldest)
+    }
+  }
+}
 
 // 自定义 Error：标记需要回退到非分片下载
 class FallbackError extends Error {
@@ -34,6 +53,16 @@ class FallbackError extends Error {
     this.name = 'FallbackError'
   }
 
+}
+
+// 仅测试用:清空运行期黑名单(模块级 Set 跨 test 会污染)
+export function __clearUnsupportedRangeDomains (): void {
+  unsupportedRangeDomains.clear()
+}
+
+// 仅测试用:手工登记一个 host 到黑名单(用于验证后续请求直接跳过 Range)
+export function __addUnsupportedRangeDomain (hostKey: string): void {
+  addUnsupportedRangeDomain(hostKey)
 }
 
 function getProtocol (protocol: string) {
@@ -114,11 +143,20 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   const defaultPort = protocol === 'https:' ? '443' : '80'
   const hostKey = `${hostname}:${port || defaultPort}`
 
-  // 直接尝试分片下载，不检查 Accept-Ranges 和 fileSize
+  // A2：若 HEAD 明确声明 Accept-Ranges: none，记录到运行期黑名单
+  // 以便 downloadFileInChunks 本次请求就直接以非 Range 模式发起
+  // Accept-Ranges header 可能是 string | string[]，归一化后匹配 'none'
+  const acceptRangesRaw = headHeaders['accept-ranges']
+  const acceptRanges = Array.isArray(acceptRangesRaw) ? acceptRangesRaw[0] : acceptRangesRaw
+  if (typeof acceptRanges === 'string' && acceptRanges.trim().toLowerCase() === 'none') {
+    addUnsupportedRangeDomain(hostKey)
+  }
+
+  // 直接尝试分片下载，不检查 fileSize
   // 原因：
   // 1. 有些服务器 HEAD 不返回 Accept-Ranges 但实际支持分片
   // 2. 有些服务器 HEAD 返回 fileSize=0 但实际支持分片
-  // downloadFileInChunks 内部有完善的回退机制处理不支持的情况
+  // downloadFileInChunks 内部有完善的回退机制处理不支持的情况（见 B1）
   const result = await downloadFileInChunks(url, options, proxyUrl, hostKey)
   return result
 }
@@ -292,7 +330,7 @@ async function downloadFileInChunks (
   url: string,
   options: http.RequestOptions,
   proxyUrl: string | undefined,
-  hostname: string,
+  hostKey: string,
 ): Promise<Readable> {
   const tmpFile = join(tmpdir(), `filebox-${randomUUID()}`)
   let writeStream = createWriteStream(tmpFile)
@@ -313,8 +351,7 @@ async function downloadFileInChunks (
   let downSize = 0
   let retries = 3
   // 控制是否使用 Range 请求（根据域名黑名单初始化）
-  let useRange = !unsupportedRangeDomains.has(hostname)
-  let useChunked = false
+  let useRange = !unsupportedRangeDomains.has(hostKey)
 
   do {
     // 每次循环前检查文件实际大小，作为真实的下载进度
@@ -382,9 +419,6 @@ async function downloadFileInChunks (
           throw new Error(`File size mismatch: expected ${expectedTotal}, but server returned ${total}`)
         }
 
-        // 标记使用了分片下载
-        useChunked = true
-
         // 验证服务器返回的范围是否与请求匹配
         if (actualStart !== start) {
           if (actualStart > start) {
@@ -409,18 +443,16 @@ async function downloadFileInChunks (
         downSize += end - start + 1
         start = downSize
       } else if (res.statusCode === 200) {
-        // 200: 服务器返回完整文件
-        if (useChunked || start > 0) {
-          // 之前以分片模式下载过数据
-          writeStream.destroy()
-          await rm(tmpFile, { force: true }).catch(() => {})
-          writeStream = createWriteStream(tmpFile)
-          writeStream.on('error', onWriteError)
-          start = 0
-          downSize = 0
+        if (useRange) {
+          // B1：发了 Range 却收到 200 —— 服务器未实现 Range
+          // 响应体是"对带 Range 请求的回答"，不可信（见 CMSV6 场景）
+          // 交给 FallbackError 的 catch 分支统一处理：销毁流、删 tmp、加入黑名单、重发
+          throw new FallbackError('Server returned 200 for Range request')
         }
-
-        // 处理完整文件响应
+        // 200: 服务器返回完整文件（本次未带 Range）
+        // B1 保证带 Range 收 200 一定经 FallbackError 回退,catch 里已重置
+        // expectedTotal/downSize/start/useRange,进入此分支时一定是
+        // 全新的非 Range 请求,无须再清理已写数据
         expectedTotal = contentLength
         await pipeline(res, writeStream, { end: false, signal })
         downSize = contentLength
@@ -433,7 +465,7 @@ async function downloadFileInChunks (
     } catch (error) {
       if (error instanceof FallbackError) {
         // 回退逻辑：记录域名、重置状态，在下次循环中以非 range 模式请求
-        unsupportedRangeDomains.add(hostname)
+        addUnsupportedRangeDomain(hostKey)
 
         // 关闭当前写入流
         writeStream.destroy()
@@ -452,7 +484,6 @@ async function downloadFileInChunks (
         expectedTotal = null
         downSize = 0
         start = 0
-        useChunked = false
         useRange = false
         retries = 3
         continue
