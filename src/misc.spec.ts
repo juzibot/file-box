@@ -332,6 +332,53 @@ test('httpStream: 带 Range 却收到 200 时回退重发不带 Range(B1 - CMSV6
   t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '最终数据应为 TRUE_DATA(回退后拿到的)')
 })
 
+test('httpStream: HEAD 返回 4xx 且 Range GET 返回 400 时回退到非 Range 模式(B2 - HEAD 不支持场景)', async (t) => {
+  __clearUnsupportedRangeDomains()
+
+  const TRUE_DATA = Buffer.from('TRUE-DATA-HEAD-UNSUPPORTED', 'utf8')
+  let getCallCount = 0
+  const getRangeHeaderByCall: (string | undefined)[] = []
+
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      // 模拟服务器不支持 HEAD 方法，返回 425
+      res.writeHead(425)
+      res.end()
+      return
+    }
+    getCallCount += 1
+    const rangeHeader = req.headers.range
+    getRangeHeaderByCall.push(typeof rangeHeader === 'string' ? rangeHeader : undefined)
+
+    if (rangeHeader) {
+      // 服务器也不支持 Range，返回 400
+      res.writeHead(400)
+      res.end('Bad Request')
+      return
+    }
+
+    // 不带 Range 的 GET 正常返回
+    res.writeHead(200, { 'Content-Length': String(TRUE_DATA.length) })
+    res.end(TRUE_DATA)
+  })
+
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
+
+  const stream = await httpStream(`${host}/file`)
+  const buffer = await streamToBuffer(stream)
+
+  t.equal(getCallCount, 2, 'GET 应被调用 2 次(第一次带 Range 收到 400 触发回退,第二次不带 Range)')
+  t.ok(getRangeHeaderByCall[0], '第 1 次 GET 应携带 Range header')
+  t.equal(getRangeHeaderByCall[1], undefined, '第 2 次 GET 不应携带 Range header')
+  t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '最终数据应为 TRUE_DATA')
+})
+
 test('httpStream: 黑名单登记的 host 后续请求直接跳过 Range(B1 黑名单持久化)', async (t) => {
   __clearUnsupportedRangeDomains()
 

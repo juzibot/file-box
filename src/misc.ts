@@ -382,6 +382,12 @@ async function downloadFileInChunks (
         // 416: Range Not Satisfiable，服务器不支持此范围或文件大小不匹配
         throw new FallbackError('416 Range Not Satisfiable')
       }
+      // B2：带 Range 请求收到 4xx 时，视为服务器不支持 Range，触发回退
+      // 典型场景：HEAD 返回非标准状态码（如 425），httpHeadHeader 无法判断是否支持 Range，
+      // 随后带 Range 的 GET 收到 400/403/405 等
+      if (useRange && !allowStatusCode.includes(res.statusCode ?? 0) && res.statusCode && res.statusCode >= 400 && res.statusCode < 500) {
+        throw new FallbackError(`Server returned ${res.statusCode} for Range request`)
+      }
       assert(allowStatusCode.includes(res.statusCode ?? 0), `Request failed with status code ${res.statusCode}`)
       const contentLength = Number(res.headers['content-length']) || 0
       assert(contentLength >= 0, `Server returned ${contentLength} bytes of data`)
