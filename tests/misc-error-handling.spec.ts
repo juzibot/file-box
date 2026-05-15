@@ -414,3 +414,96 @@ test('should handle empty response', async (t) => {
     server.close()
   }
 })
+
+test('should fallback to Range GET when HEAD is rejected by server', async (t) => {
+  // 模拟 https://ibc.chinastock.com.cn 那种服务器：HEAD 返回 425 + HTML 错误页，
+  // GET 正常返回真实文件（支持 Range）。
+  const content = 'REAL_PDF_CONTENT_BYTES'
+  const errorBody = '<html>HEAD not allowed</html>'
+
+  let headCount = 0
+  let rangeGetCount = 0
+  let fullGetCount = 0
+
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      headCount++
+      res.writeHead(425, {
+        'Content-Length': String(errorBody.length),
+        'Content-Type': 'text/html',
+      })
+      res.end()
+      return
+    }
+
+    if (req.headers.range) {
+      rangeGetCount++
+      const m = String(req.headers.range).match(/bytes=(\d+)-(\d*)/)
+      if (m) {
+        const start = Number(m[1])
+        const end = m[2] ? Number(m[2]) : content.length - 1
+        const chunk = content.slice(start, end + 1)
+        res.writeHead(206, {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(chunk.length),
+          'Content-Range': `bytes ${start}-${end}/${content.length}`,
+          'Content-Type': 'application/pdf',
+        })
+        res.end(chunk)
+        return
+      }
+    }
+
+    fullGetCount++
+    res.writeHead(200, {
+      'Content-Length': String(content.length),
+      'Content-Type': 'application/pdf',
+    })
+    res.end(content)
+  })
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+
+  const port = (server.address() as AddressInfo).port
+  const url = `http://127.0.0.1:${port}/pdf`
+
+  try {
+    const stream = await httpStream(url)
+    const buffer = await streamToBuffer(stream)
+
+    t.equal(buffer.toString(), content, 'should download real content when HEAD is rejected')
+    t.ok(headCount >= 1, 'HEAD should have been attempted at least once')
+    t.ok(rangeGetCount >= 1, 'Range GET fallback should have been invoked')
+  } finally {
+    server.close()
+  }
+})
+
+test('should surface error when both HEAD and Range GET fail', async (t) => {
+  // HEAD 和 Range GET 都返回 4xx，应当抛错而不是把错误页当成 body 返回。
+  const server = createServer((_req, res) => {
+    res.writeHead(403, { 'Content-Type': 'text/html' })
+    res.end('<html>forbidden</html>')
+  })
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve())
+  })
+
+  const port = (server.address() as AddressInfo).port
+  const url = `http://127.0.0.1:${port}/denied`
+
+  try {
+    await t.rejects(
+      async () => {
+        const stream = await httpStream(url)
+        return await streamToBuffer(stream)
+      },
+      'should reject when both HEAD and Range GET are denied',
+    )
+  } finally {
+    server.close()
+  }
+})

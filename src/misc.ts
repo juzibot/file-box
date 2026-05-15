@@ -92,20 +92,43 @@ export async function httpHeadHeader (url: string, headers: http.OutgoingHttpHea
 
     const res = await fetchHead(url, headers, proxyUrl)
     res.destroy()
+    const status = res.statusCode ?? 0
 
-    if (!/^3/.test(String(res.statusCode))) {
+    // 3xx: 继续跟随重定向
+    if (/^3/.test(String(status))) {
+      if (!res.headers.location) {
+        throw new Error('302 found but no location!')
+      }
+      // Location 可能是相对路径，需要以当前 url 作为 base 解析
+      url = new URL(res.headers.location, url).toString()
+      continue
+    }
+
+    // 2xx: HEAD 正常返回
+    if (status >= 200 && status < 300) {
       if (originUrl !== url) {
         res.headers.location = url
       }
       return res.headers
     }
 
-    if (!res.headers.location) {
-      throw new Error('302 found but no location!')
+    // 其它状态码（4xx/5xx）：某些服务器拒绝 HEAD 但允许 GET
+    // （如 https://ibc.chinastock.com.cn 对 HEAD 返回 425 <unknown> + HTML 错误页）
+    // 此时直接返回坏响应头会让下游把错误页当成真实文件 body 交给 FFmpeg/企微，
+    // 触发 "Expected HTTP/, RTSP/ or ICE/" 之类的解析错误。
+    // 回退到 Range GET 探测真实响应头。
+    const rangeRes = await fetchRangeHeader(url, headers, proxyUrl)
+    const rangeStatus = rangeRes.statusCode ?? 0
+    rangeRes.destroy()
+
+    if (rangeStatus >= 200 && rangeStatus < 300) {
+      if (originUrl !== url) {
+        rangeRes.headers.location = url
+      }
+      return rangeRes.headers
     }
 
-    // Location 可能是相对路径，需要以当前 url 作为 base 解析
-    url = new URL(res.headers.location, url).toString()
+    throw new Error(`HEAD request failed with status ${status}, Range GET fallback also failed with status ${rangeStatus}`)
   }
 }
 
