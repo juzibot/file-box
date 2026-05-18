@@ -91,6 +91,15 @@ export async function httpHeadHeader (url: string, headers: http.OutgoingHttpHea
     }
 
     const res = await fetchHead(url, headers, proxyUrl)
+
+    // HEAD 返回 4xx 时，服务器可能违规携带 body（如 425 返回 HTML），
+    // 这些 body 字节会残留在 keep-alive socket 中，污染连接池。
+    // 直接销毁 socket 并抛错，让 httpStream 走非 Range 模式用新连接。
+    if (res.statusCode && res.statusCode >= 400) {
+      res.socket?.destroy()
+      res.destroy()
+      throw new Error(`HEAD returned ${res.statusCode}`)
+    }
     res.destroy()
 
     if (!/^3/.test(String(res.statusCode))) {
@@ -248,8 +257,9 @@ async function fetch (url: string, options: http.RequestOptions, proxyUrl?: stri
 async function fetchHead (url: string, headers: http.OutgoingHttpHeaders = {}, proxyUrl?: string): Promise<http.IncomingMessage> {
   try {
     return await fetch(url, {
-      headers,
+      headers: { ...headers, Connection: 'close' },
       method: 'HEAD',
+      agent: false,
     }, proxyUrl)
   } catch (error) {
     if (!shouldFallbackHeadToRangeGet(error)) {
