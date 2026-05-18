@@ -62,3 +62,4 @@ typings/
 t.*
 t/
 dist/
+.omc

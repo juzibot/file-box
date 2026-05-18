@@ -332,7 +332,7 @@ test('httpStream: 带 Range 却收到 200 时回退重发不带 Range(B1 - CMSV6
   t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '最终数据应为 TRUE_DATA(回退后拿到的)')
 })
 
-test('httpStream: HEAD 返回 4xx 且 Range GET 返回 400 时回退到非 Range 模式(B2 - HEAD 不支持场景)', async (t) => {
+test('httpStream: HEAD 返回 4xx 时直接以非 Range 模式下载(B2 - HEAD 不支持场景)', async (t) => {
   __clearUnsupportedRangeDomains()
 
   const TRUE_DATA = Buffer.from('TRUE-DATA-HEAD-UNSUPPORTED', 'utf8')
@@ -373,9 +373,8 @@ test('httpStream: HEAD 返回 4xx 且 Range GET 返回 400 时回退到非 Range
   const stream = await httpStream(`${host}/file`)
   const buffer = await streamToBuffer(stream)
 
-  t.equal(getCallCount, 2, 'GET 应被调用 2 次(第一次带 Range 收到 400 触发回退,第二次不带 Range)')
-  t.ok(getRangeHeaderByCall[0], '第 1 次 GET 应携带 Range header')
-  t.equal(getRangeHeaderByCall[1], undefined, '第 2 次 GET 不应携带 Range header')
+  t.equal(getCallCount, 1, 'GET 应只被调用 1 次(HEAD 4xx 后直接非 Range 模式)')
+  t.equal(getRangeHeaderByCall[0], undefined, 'GET 不应携带 Range header')
   t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '最终数据应为 TRUE_DATA')
 })
 
