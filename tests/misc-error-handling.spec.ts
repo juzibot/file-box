@@ -6,13 +6,25 @@ import { setTimeout as delay } from 'timers/promises'
 import { test } from 'tstest'
 
 import { httpStream, streamToBuffer } from '../src/misc.js'
+import { CONFIG } from '../src/config.js'
 import { FileBox } from '../src/mod.js'
 
 test('should handle connection abort gracefully', async (t) => {
-  const server = createServer((_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' })
+  const FULL_CONTENT = 'Starting...' + 'X'.repeat(10000)
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Length': String(FULL_CONTENT.length),
+      })
+      res.end()
+      return
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/plain',
+      'Content-Length': String(FULL_CONTENT.length),
+    })
     res.write('Starting...')
-    // Simulate connection abort after short delay
+    // Simulate connection abort after short delay (only partial data sent)
     setTimeout(() => {
       res.destroy()
     }, 100)
@@ -27,7 +39,6 @@ test('should handle connection abort gracefully', async (t) => {
   const url = `http://127.0.0.1:${port}/test`
 
   try {
-    // 连接可能在拿到 response 之前或之后中断：两种路径都应当最终 reject
     await t.rejects(
       async () => {
         const stream = await httpStream(url)
@@ -41,12 +52,28 @@ test('should handle connection abort gracefully', async (t) => {
 })
 
 test('should handle timeout correctly', async (t) => {
-  const LONG_DELAY = 70000 // Longer than HTTP_RESPONSE_TIMEOUT (60s)
+  const FULL_SIZE = 10000
+  const LONG_DELAY = 10000
 
-  const server = createServer((_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' })
+  // 使用短超时加速测试
+  const origResponseTimeout = CONFIG.HTTP_RESPONSE_TIMEOUT
+  CONFIG.HTTP_RESPONSE_TIMEOUT = 1000
+  t.teardown(() => { CONFIG.HTTP_RESPONSE_TIMEOUT = origResponseTimeout })
+
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Length': String(FULL_SIZE),
+      })
+      res.end()
+      return
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/plain',
+      'Content-Length': String(FULL_SIZE),
+    })
     res.write('First chunk')
-    // Simulate very slow response
+    // Simulate very slow response - declare large Content-Length but stall
     delay(LONG_DELAY)
       .then(() => res.end('Second chunk'))
       .catch(() => {})
