@@ -379,6 +379,48 @@ test('httpStream: HEAD 返回 4xx 且 Range GET 返回 400 时回退到非 Range
   t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), '最终数据应为 TRUE_DATA')
 })
 
+test('httpStream: HEAD 触发 HPE 解析错误且 Range probe 也失败时,回退到普通 GET(B3 - HPE 场景)', async (t) => {
+  __clearUnsupportedRangeDomains()
+
+  const TRUE_DATA = Buffer.from('TRUE-DATA-HPE-FALLBACK', 'utf8')
+
+  // 模拟真实场景：HEAD 和 Range probe 都失败，但普通 GET 正常
+  // 使用 http.createServer 区分请求类型
+  let headCount = 0
+  let getCount = 0
+  const server = createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      headCount++
+      // 直接销毁 socket，模拟 HPE 类错误（连接异常断开）
+      req.socket.destroy()
+      return
+    }
+    if (req.headers.range && req.headers.range.includes('bytes=0-0')) {
+      // Range probe 也失败
+      req.socket.destroy()
+      return
+    }
+    // 普通 GET 正常返回
+    getCount++
+    res.writeHead(200, { 'Content-Length': String(TRUE_DATA.length) })
+    res.end(TRUE_DATA)
+  })
+
+  const host = await new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo
+      resolve(`http://127.0.0.1:${addr.port}`)
+    })
+  })
+  t.teardown(() => { server.close() })
+
+  const stream = await httpStream(`${host}/file`)
+  const buffer = await streamToBuffer(stream)
+
+  t.equal(buffer.toString('utf8'), TRUE_DATA.toString('utf8'), 'HEAD 失败后应通过普通 GET 拿到数据')
+  t.equal(getCount, 1, '普通 GET 应只被调用 1 次(不带 Range)')
+})
+
 test('httpStream: 黑名单登记的 host 后续请求直接跳过 Range(B1 黑名单持久化)', async (t) => {
   __clearUnsupportedRangeDomains()
 

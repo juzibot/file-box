@@ -127,8 +127,15 @@ export function httpHeaderToFileName (headers: http.IncomingHttpHeaders): null |
 }
 
 export async function httpStream (url: string, headers: http.OutgoingHttpHeaders = {}, proxyUrl?: string): Promise<Readable> {
-  const headHeaders = await httpHeadHeader(url, headers, proxyUrl)
-  if (headHeaders.location) {
+  let headHeaders: http.IncomingHttpHeaders | undefined
+  try {
+    headHeaders = await httpHeadHeader(url, headers, proxyUrl)
+  } catch {
+    // HEAD 完全失败（如 HPE 解析错误 + Range probe 也失败）
+    // 跳过 HEAD 阶段，直接以非 Range 模式下载
+  }
+
+  if (headHeaders?.location) {
     url = headHeaders.location
   }
   const { protocol, hostname, port } = new URL(url)
@@ -143,20 +150,18 @@ export async function httpStream (url: string, headers: http.OutgoingHttpHeaders
   const defaultPort = protocol === 'https:' ? '443' : '80'
   const hostKey = `${hostname}:${port || defaultPort}`
 
-  // A2：若 HEAD 明确声明 Accept-Ranges: none，记录到运行期黑名单
-  // 以便 downloadFileInChunks 本次请求就直接以非 Range 模式发起
-  // Accept-Ranges header 可能是 string | string[]，归一化后匹配 'none'
-  const acceptRangesRaw = headHeaders['accept-ranges']
-  const acceptRanges = Array.isArray(acceptRangesRaw) ? acceptRangesRaw[0] : acceptRangesRaw
-  if (typeof acceptRanges === 'string' && acceptRanges.trim().toLowerCase() === 'none') {
+  if (headHeaders) {
+    // A2：若 HEAD 明确声明 Accept-Ranges: none，记录到运行期黑名单
+    const acceptRangesRaw = headHeaders['accept-ranges']
+    const acceptRanges = Array.isArray(acceptRangesRaw) ? acceptRangesRaw[0] : acceptRangesRaw
+    if (typeof acceptRanges === 'string' && acceptRanges.trim().toLowerCase() === 'none') {
+      addUnsupportedRangeDomain(hostKey)
+    }
+  } else {
+    // HEAD 失败：加入黑名单，downloadFileInChunks 将直接以非 Range 模式发起
     addUnsupportedRangeDomain(hostKey)
   }
 
-  // 直接尝试分片下载，不检查 fileSize
-  // 原因：
-  // 1. 有些服务器 HEAD 不返回 Accept-Ranges 但实际支持分片
-  // 2. 有些服务器 HEAD 返回 fileSize=0 但实际支持分片
-  // downloadFileInChunks 内部有完善的回退机制处理不支持的情况（见 B1）
   const result = await downloadFileInChunks(url, options, proxyUrl, hostKey)
   return result
 }
